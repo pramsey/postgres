@@ -34,11 +34,15 @@
 
 #include "postgres_fdw.h"
 
+#include "access/genam.h"
 #include "access/heapam.h"
 #include "access/htup_details.h"
 #include "access/sysattr.h"
 #include "access/transam.h"
+#include "catalog/dependency.h"
+#include "catalog/indexing.h"
 #include "catalog/pg_collation.h"
+#include "catalog/pg_depend.h"
 #include "catalog/pg_namespace.h"
 #include "catalog/pg_operator.h"
 #include "catalog/pg_proc.h"
@@ -49,6 +53,7 @@
 #include "optimizer/var.h"
 #include "parser/parsetree.h"
 #include "utils/builtins.h"
+#include "utils/fmgroids.h"
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
@@ -138,6 +143,9 @@ static void printRemotePlaceholder(Oid paramtype, int32 paramtypmod,
 					   deparse_expr_cxt *context);
 
 
+/* PostGIS */
+static bool is_in_postgis(Oid procid, PgFdwRelationInfo *fpinfo);
+
 /*
  * Examine each qual clause in input_conds, and classify them into two groups,
  * which are returned as two lists:
@@ -167,6 +175,7 @@ classifyConditions(PlannerInfo *root,
 	}
 }
 
+
 /*
  * Returns true if given expr is safe to evaluate on the foreign server.
  */
@@ -177,7 +186,7 @@ is_foreign_expr(PlannerInfo *root,
 {
 	foreign_glob_cxt glob_cxt;
 	foreign_loc_cxt loc_cxt;
-
+	
 	/*
 	 * Check that the expression consists of nodes that are safe to execute
 	 * remotely.
@@ -207,6 +216,8 @@ is_foreign_expr(PlannerInfo *root,
 	return true;
 }
 
+
+
 /*
  * Check if expression is safe to execute remotely, and return true if so.
  *
@@ -228,6 +239,9 @@ foreign_expr_walker(Node *node,
 	foreign_loc_cxt inner_cxt;
 	Oid			collation;
 	FDWCollateState state;
+
+	/* Access PostGIS metadata from fpinfo on baserel */
+	PgFdwRelationInfo *fpinfo = (PgFdwRelationInfo *)(glob_cxt->foreignrel->fdw_private);
 
 	/* Need do nothing for empty subexpressions */
 	if (node == NULL)
@@ -361,7 +375,7 @@ foreign_expr_walker(Node *node,
 				 * can't be sent to remote because it might have incompatible
 				 * semantics on remote side.
 				 */
-				if (!is_builtin(fe->funcid))
+				if (!is_builtin(fe->funcid) && (!is_in_postgis(fe->funcid, fpinfo)))
 					return false;
 
 				/*
@@ -407,7 +421,8 @@ foreign_expr_walker(Node *node,
 				 * (If the operator is, surely its underlying function is
 				 * too.)
 				 */
-				if (!is_builtin(oe->opno))
+				if ( (!is_builtin(oe->opno)) && 
+				     (!is_in_postgis(oe->opno, fpinfo)) )
 					return false;
 
 				/*
@@ -445,7 +460,7 @@ foreign_expr_walker(Node *node,
 				/*
 				 * Again, only built-in operators can be sent to remote.
 				 */
-				if (!is_builtin(oe->opno))
+				if (!is_builtin(oe->opno) && (!is_in_postgis(oe->opno, fpinfo)))
 					return false;
 
 				/*
@@ -591,7 +606,7 @@ foreign_expr_walker(Node *node,
 	 * If result type of given expression is not built-in, it can't be sent to
 	 * remote because it might have incompatible semantics on remote side.
 	 */
-	if (check_type && !is_builtin(exprType(node)))
+	if (check_type && !is_builtin(exprType(node)) && (!is_in_postgis(exprType(node), fpinfo)) )
 		return false;
 
 	/*
@@ -643,6 +658,8 @@ foreign_expr_walker(Node *node,
 	return true;
 }
 
+
+
 /*
  * Return true if given object is one of PostgreSQL's built-in objects.
  *
@@ -665,6 +682,56 @@ static bool
 is_builtin(Oid oid)
 {
 	return (oid < FirstBootstrapObjectId);
+}
+
+
+/*
+ * Returns true if given operator is part of postgis extension
+ */
+static bool
+is_in_postgis(Oid procnumber, PgFdwRelationInfo *fpinfo)
+{
+	static int nkeys = 1;
+	ScanKeyData key[nkeys];
+	HeapTuple tup;
+	Relation depRel;
+	SysScanDesc scan;
+	int nresults = 0;
+
+	/* Always return false if we aren't supposed to use PostGIS */
+	if ( ! fpinfo->use_postgis )
+		return false;
+
+	/* We need this relation to scan */
+	depRel = heap_open(DependRelationId, RowExclusiveLock);
+
+	/* Scan the system dependency table for a all entries this operator */
+	/* depends on, then iterate through and see if one of them */
+	/* is the postgis extension */
+	ScanKeyInit(&key[0],
+				Anum_pg_depend_objid,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(procnumber));
+
+	scan = systable_beginscan(depRel, DependDependerIndexId, true,
+							  NULL, nkeys, key);
+
+	while (HeapTupleIsValid(tup = systable_getnext(scan)))
+	{
+		Form_pg_depend foundDep = (Form_pg_depend) GETSTRUCT(tup);
+		
+		if ( foundDep->deptype == DEPENDENCY_EXTENSION && 
+		     foundDep->refobjid == fpinfo->postgis_oid )
+		{
+			nresults++;
+			break;
+		}
+	}
+
+	systable_endscan(scan);
+	relation_close(depRel, RowExclusiveLock);
+	
+	return nresults > 0;	
 }
 
 
@@ -1404,8 +1471,7 @@ deparseConst(Const *node, deparse_expr_cxt *context)
 	}
 	if (needlabel)
 		appendStringInfo(buf, "::%s",
-						 format_type_with_typemod(node->consttype,
-												  node->consttypmod));
+						 format_type_be_qualified(node->consttype));
 }
 
 /*

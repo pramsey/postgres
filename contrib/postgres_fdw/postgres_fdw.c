@@ -17,6 +17,7 @@
 #include "access/htup_details.h"
 #include "access/sysattr.h"
 #include "commands/defrem.h"
+#include "commands/extension.h"
 #include "commands/explain.h"
 #include "commands/vacuum.h"
 #include "foreign/fdwapi.h"
@@ -47,39 +48,6 @@ PG_MODULE_MAGIC;
 /* Default CPU cost to process 1 row (above and beyond cpu_tuple_cost). */
 #define DEFAULT_FDW_TUPLE_COST		0.01
 
-/*
- * FDW-specific planner information kept in RelOptInfo.fdw_private for a
- * foreign table.  This information is collected by postgresGetForeignRelSize.
- */
-typedef struct PgFdwRelationInfo
-{
-	/* baserestrictinfo clauses, broken down into safe and unsafe subsets. */
-	List	   *remote_conds;
-	List	   *local_conds;
-
-	/* Bitmap of attr numbers we need to fetch from the remote server. */
-	Bitmapset  *attrs_used;
-
-	/* Cost and selectivity of local_conds. */
-	QualCost	local_conds_cost;
-	Selectivity local_conds_sel;
-
-	/* Estimated size and cost for a scan with baserestrictinfo quals. */
-	double		rows;
-	int			width;
-	Cost		startup_cost;
-	Cost		total_cost;
-
-	/* Options extracted from catalogs. */
-	bool		use_remote_estimate;
-	Cost		fdw_startup_cost;
-	Cost		fdw_tuple_cost;
-
-	/* Cached catalog information. */
-	ForeignTable *table;
-	ForeignServer *server;
-	UserMapping *user;			/* only set in use_remote_estimate mode */
-} PgFdwRelationInfo;
 
 /*
  * Indexes of FDW-private information stored in fdw_private lists.
@@ -422,10 +390,14 @@ postgresGetForeignRelSize(PlannerInfo *root,
 		DefElem    *def = (DefElem *) lfirst(lc);
 
 		if (strcmp(def->defname, "use_remote_estimate") == 0)
-		{
 			fpinfo->use_remote_estimate = defGetBoolean(def);
-			break;				/* only need the one value */
-		}
+		else if (strcmp(def->defname, "use_postgis") == 0)
+			fpinfo->use_postgis = defGetBoolean(def);
+	}
+
+	if ( fpinfo->use_postgis )
+	{
+		fpinfo->postgis_oid = get_extension_oid("postgis", true);
 	}
 
 	/*
@@ -2994,3 +2966,50 @@ conversion_error_callback(void *arg)
 				   NameStr(tupdesc->attrs[errpos->cur_attno - 1]->attname),
 				   RelationGetRelationName(errpos->rel));
 }
+
+/*
+ * postgresReadExtensions
+ *		Test whether analyzing this foreign table is supported
+ */
+// static bool
+// conn_has_postgis(PGconn *conn)
+// {
+// 	StringInfoData sql;
+// 	PGresult   *volatile res = NULL;
+// 	bool has_postgis = false;
+//
+// 	/*
+// 	 * Construct command to get page count for relation.
+// 	 */
+// 	initStringInfo(&sql);
+//
+// 	appendStringInfoString(&sql, "SELECT oid, extname FROM pg_catalog.pg_extension WHERE extname = 'postgis'");
+//
+// 	/* In what follows, do not risk leaking any PGresults. */
+// 	PG_TRY();
+// 	{
+// 		res = PQexec(conn, sql.data);
+// 		if (PQresultStatus(res) != PGRES_TUPLES_OK)
+// 			pgfdw_report_error(ERROR, res, conn, false, sql.data);
+//
+// 		if (PQntuples(res) > 1 || PQnfields(res) != 2)
+// 			elog(ERROR, "unexpected result from conn_get_postgis_oid query");
+//
+// 		if (PQntuples(res) == 1)
+// 		{
+// 			has_postgis = true;
+// 		}
+//
+// 		PQclear(res);
+// 		res = NULL;
+// 	}
+// 	PG_CATCH();
+// 	{
+// 		if (res)
+// 			PQclear(res);
+// 		PG_RE_THROW();
+// 	}
+// 	PG_END_TRY();
+//
+// 	return has_postgis;
+// }

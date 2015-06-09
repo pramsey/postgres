@@ -56,6 +56,7 @@
 #include "utils/fmgroids.h"
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
+#include "utils/snapmgr.h"
 #include "utils/syscache.h"
 
 
@@ -714,7 +715,7 @@ is_in_postgis(Oid procnumber, PgFdwRelationInfo *fpinfo)
 				ObjectIdGetDatum(procnumber));
 
 	scan = systable_beginscan(depRel, DependDependerIndexId, true,
-							  NULL, nkeys, key);
+							  GetCatalogSnapshot(depRel->rd_id), nkeys, key);
 
 	while (HeapTupleIsValid(tup = systable_getnext(scan)))
 	{

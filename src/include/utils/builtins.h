@@ -469,14 +469,16 @@ extern Datum pg_filenode_relation(PG_FUNCTION_ARGS);
 extern Datum pg_relation_filepath(PG_FUNCTION_ARGS);
 
 /* genfile.c */
-extern bytea *read_binary_file(const char *filename,
-				 int64 seek_offset, int64 bytes_to_read);
 extern Datum pg_stat_file(PG_FUNCTION_ARGS);
+extern Datum pg_stat_file_1arg(PG_FUNCTION_ARGS);
 extern Datum pg_read_file(PG_FUNCTION_ARGS);
+extern Datum pg_read_file_off_len(PG_FUNCTION_ARGS);
 extern Datum pg_read_file_all(PG_FUNCTION_ARGS);
 extern Datum pg_read_binary_file(PG_FUNCTION_ARGS);
+extern Datum pg_read_binary_file_off_len(PG_FUNCTION_ARGS);
 extern Datum pg_read_binary_file_all(PG_FUNCTION_ARGS);
 extern Datum pg_ls_dir(PG_FUNCTION_ARGS);
+extern Datum pg_ls_dir_1arg(PG_FUNCTION_ARGS);
 
 /* misc.c */
 extern Datum current_database(PG_FUNCTION_ARGS);
@@ -1112,6 +1114,7 @@ extern Datum quote_nullable(PG_FUNCTION_ARGS);
 
 /* guc.c */
 extern Datum show_config_by_name(PG_FUNCTION_ARGS);
+extern Datum show_config_by_name_missing_ok(PG_FUNCTION_ARGS);
 extern Datum set_config_by_name(PG_FUNCTION_ARGS);
 extern Datum show_all_settings(PG_FUNCTION_ARGS);
 extern Datum show_all_file_settings(PG_FUNCTION_ARGS);

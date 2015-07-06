@@ -38,6 +38,7 @@
 #include "catalog/catversion.h"
 #include "catalog/pg_control.h"
 #include "catalog/pg_database.h"
+#include "commands/tablespace.h"
 #include "miscadmin.h"
 #include "pgstat.h"
 #include "postmaster/bgwriter.h"
@@ -807,7 +808,7 @@ static bool XLogCheckpointNeeded(XLogSegNo new_segno);
 static void XLogWrite(XLogwrtRqst WriteRqst, bool flexible);
 static bool InstallXLogFileSegment(XLogSegNo *segno, char *tmppath,
 					   bool find_free, XLogSegNo max_segno,
-					   bool use_lock, int elevel);
+					   bool use_lock);
 static int XLogFileRead(XLogSegNo segno, int emode, TimeLineID tli,
 			 int source, bool notexistOk);
 static int	XLogFileReadAnyTLI(XLogSegNo segno, int emode, int source);
@@ -1096,7 +1097,7 @@ XLogInsertRecord(XLogRecData *rdata, XLogRecPtr fpw_lsn)
 
 		if (!debug_reader)
 		{
-			appendStringInfo(&buf, "error decoding record: out of memory");
+			appendStringInfoString(&buf, "error decoding record: out of memory");
 		}
 		else if (!DecodeXLogRecord(debug_reader, (XLogRecord *) recordBuf.data,
 								   &errormsg))
@@ -1983,9 +1984,9 @@ AdvanceXLInsertBuffer(XLogRecPtr upto, bool opportunistic)
 	LWLockRelease(WALBufMappingLock);
 
 #ifdef WAL_DEBUG
-	if (npages > 0)
+	if (XLOG_DEBUG && npages > 0)
 	{
-		elog(DEBUG1, "initialized %d pages, upto %X/%X",
+		elog(DEBUG1, "initialized %d pages, up to %X/%X",
 			 npages, (uint32) (NewPageEndPtr >> 32), (uint32) NewPageEndPtr);
 	}
 #endif
@@ -3012,7 +3013,7 @@ XLogFileInit(XLogSegNo logsegno, bool *use_existent, bool use_lock)
 	max_segno = logsegno + CheckPointSegments;
 	if (!InstallXLogFileSegment(&installed_segno, tmppath,
 								*use_existent, max_segno,
-								use_lock, LOG))
+								use_lock))
 	{
 		/*
 		 * No need for any more future segments, or InstallXLogFileSegment()
@@ -3039,20 +3040,25 @@ XLogFileInit(XLogSegNo logsegno, bool *use_existent, bool use_lock)
 }
 
 /*
- * Copy a WAL segment file in pg_xlog directory.
+ * Create a new XLOG file segment by copying a pre-existing one.
  *
- * srcfname		source filename
- * upto			how much of the source file to copy? (the rest is filled with
- *				zeros)
- * segno		identify segment to install.
+ * destsegno: identify segment to be created.
  *
- * The file is first copied with a temporary filename, and then installed as
- * a newly-created segment.
+ * srcTLI, srclog, srcseg: identify segment to be copied (could be from
+ *		a different timeline)
+ *
+ * upto: how much of the source file to copy (the rest is filled with
+ *		zeros)
+ *
+ * Currently this is only used during recovery, and so there are no locking
+ * considerations.  But we should be just as tense as XLogFileInit to avoid
+ * emplacing a bogus file.
  */
 static void
-XLogFileCopy(char *srcfname, int upto, XLogSegNo segno)
+XLogFileCopy(XLogSegNo destsegno, TimeLineID srcTLI, XLogSegNo srcsegno,
+			 int upto)
 {
-	char		srcpath[MAXPGPATH];
+	char		path[MAXPGPATH];
 	char		tmppath[MAXPGPATH];
 	char		buffer[XLOG_BLCKSZ];
 	int			srcfd;
@@ -3062,12 +3068,12 @@ XLogFileCopy(char *srcfname, int upto, XLogSegNo segno)
 	/*
 	 * Open the source file
 	 */
-	snprintf(srcpath, MAXPGPATH, XLOGDIR "/%s", srcfname);
-	srcfd = OpenTransientFile(srcpath, O_RDONLY | PG_BINARY, 0);
+	XLogFilePath(path, srcTLI, srcsegno);
+	srcfd = OpenTransientFile(path, O_RDONLY | PG_BINARY, 0);
 	if (srcfd < 0)
 		ereport(ERROR,
 				(errcode_for_file_access(),
-				 errmsg("could not open file \"%s\": %m", srcpath)));
+				 errmsg("could not open file \"%s\": %m", path)));
 
 	/*
 	 * Copy into a temp file name.
@@ -3111,11 +3117,11 @@ XLogFileCopy(char *srcfname, int upto, XLogSegNo segno)
 					ereport(ERROR,
 							(errcode_for_file_access(),
 							 errmsg("could not read file \"%s\": %m",
-									srcpath)));
+									path)));
 				else
 					ereport(ERROR,
 							(errmsg("not enough data in file \"%s\"",
-									srcpath)));
+									path)));
 			}
 		}
 		errno = 0;
@@ -3148,9 +3154,11 @@ XLogFileCopy(char *srcfname, int upto, XLogSegNo segno)
 
 	CloseTransientFile(srcfd);
 
-	/* install the new file */
-	(void) InstallXLogFileSegment(&segno, tmppath, false,
-								  0, false, ERROR);
+	/*
+	 * Now move the segment into place with its final name.
+	 */
+	if (!InstallXLogFileSegment(&destsegno, tmppath, false, 0, false))
+		elog(ERROR, "InstallXLogFileSegment should not have failed");
 }
 
 /*
@@ -3177,8 +3185,6 @@ XLogFileCopy(char *srcfname, int upto, XLogSegNo segno)
  * place.  This should be TRUE except during bootstrap log creation.  The
  * caller must *not* hold the lock at call.
  *
- * elevel: log level used by this routine.
- *
  * Returns TRUE if the file was installed successfully.  FALSE indicates that
  * max_segno limit was exceeded, or an error occurred while renaming the
  * file into place.
@@ -3186,7 +3192,7 @@ XLogFileCopy(char *srcfname, int upto, XLogSegNo segno)
 static bool
 InstallXLogFileSegment(XLogSegNo *segno, char *tmppath,
 					   bool find_free, XLogSegNo max_segno,
-					   bool use_lock, int elevel)
+					   bool use_lock)
 {
 	char		path[MAXPGPATH];
 	struct stat stat_buf;
@@ -3231,7 +3237,7 @@ InstallXLogFileSegment(XLogSegNo *segno, char *tmppath,
 	{
 		if (use_lock)
 			LWLockRelease(ControlFileLock);
-		ereport(elevel,
+		ereport(LOG,
 				(errcode_for_file_access(),
 				 errmsg("could not link file \"%s\" to \"%s\" (initialization of log file): %m",
 						tmppath, path)));
@@ -3243,7 +3249,7 @@ InstallXLogFileSegment(XLogSegNo *segno, char *tmppath,
 	{
 		if (use_lock)
 			LWLockRelease(ControlFileLock);
-		ereport(elevel,
+		ereport(LOG,
 				(errcode_for_file_access(),
 				 errmsg("could not rename file \"%s\" to \"%s\" (initialization of log file): %m",
 						tmppath, path)));
@@ -3732,7 +3738,7 @@ RemoveXlogFile(const char *segname, XLogRecPtr PriorRedoPtr, XLogRecPtr endptr)
 	if (endlogSegNo <= recycleSegNo &&
 		lstat(path, &statbuf) == 0 && S_ISREG(statbuf.st_mode) &&
 		InstallXLogFileSegment(&endlogSegNo, path,
-							   true, recycleSegNo, true, LOG))
+							   true, recycleSegNo, true))
 	{
 		ereport(DEBUG2,
 				(errmsg("recycled transaction log file \"%s\"",
@@ -5211,8 +5217,6 @@ exitArchiveRecovery(TimeLineID endTLI, XLogRecPtr endOfLog)
 	 */
 	if (endLogSegNo == startLogSegNo)
 	{
-		XLogFileName(xlogfname, endTLI, endLogSegNo);
-
 		/*
 		 * Make a copy of the file on the new timeline.
 		 *
@@ -5220,7 +5224,8 @@ exitArchiveRecovery(TimeLineID endTLI, XLogRecPtr endOfLog)
 		 * considerations. But we should be just as tense as XLogFileInit to
 		 * avoid emplacing a bogus file.
 		 */
-		XLogFileCopy(xlogfname, endOfLog % XLOG_SEG_SIZE, endLogSegNo);
+		XLogFileCopy(endLogSegNo, endTLI, endLogSegNo,
+					 endOfLog % XLOG_SEG_SIZE);
 	}
 	else
 	{
@@ -6074,7 +6079,6 @@ StartupXLOG(void)
 		if (read_tablespace_map(&tablespaces))
 		{
 			ListCell   *lc;
-			struct stat st;
 
 			foreach(lc, tablespaces)
 			{
@@ -6085,27 +6089,9 @@ StartupXLOG(void)
 
 				/*
 				 * Remove the existing symlink if any and Create the symlink
-				 * under PGDATA.  We need to use rmtree instead of rmdir as
-				 * the link location might contain directories or files
-				 * corresponding to the actual path. Some tar utilities do
-				 * things that way while extracting symlinks.
+				 * under PGDATA.
 				 */
-				if (lstat(linkloc, &st) == 0 && S_ISDIR(st.st_mode))
-				{
-					if (!rmtree(linkloc, true))
-						ereport(ERROR,
-								(errcode_for_file_access(),
-							  errmsg("could not remove directory \"%s\": %m",
-									 linkloc)));
-				}
-				else
-				{
-					if (unlink(linkloc) < 0 && errno != ENOENT)
-						ereport(ERROR,
-								(errcode_for_file_access(),
-						  errmsg("could not remove symbolic link \"%s\": %m",
-								 linkloc)));
-				}
+				remove_tablespace_symlink(linkloc);
 
 				if (symlink(ti->path, linkloc) < 0)
 					ereport(ERROR,
@@ -9542,7 +9528,7 @@ xlog_outrec(StringInfo buf, XLogReaderState *record)
 							 rnode.spcNode, rnode.dbNode, rnode.relNode,
 							 blk);
 		if (XLogRecHasBlockImage(record, block_id))
-			appendStringInfo(buf, " FPW");
+			appendStringInfoString(buf, " FPW");
 	}
 }
 #endif   /* WAL_DEBUG */
@@ -10961,7 +10947,7 @@ XLogPageRead(XLogReaderState *xlogreader, XLogRecPtr targetPagePtr, int reqLen,
 		 * Request a restartpoint if we've replayed too much xlog since the
 		 * last one.
 		 */
-		if (StandbyModeRequested && bgwriterLaunched)
+		if (bgwriterLaunched)
 		{
 			if (XLogCheckpointNeeded(readSegNo))
 			{

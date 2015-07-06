@@ -225,7 +225,7 @@ static char *format_function_signature(Archive *fout,
 static char *convertRegProcReference(Archive *fout,
 						const char *proc);
 static char *convertOperatorReference(Archive *fout, const char *opr);
-static const char *convertTSFunction(Archive *fout, Oid funcOid);
+static char *convertTSFunction(Archive *fout, Oid funcOid);
 static Oid	findLastBuiltinOid_V71(Archive *fout, const char *);
 static Oid	findLastBuiltinOid_V70(Archive *fout);
 static void selectSourceSchema(Archive *fout, const char *schemaName);
@@ -1659,7 +1659,7 @@ dumpTableData_insert(Archive *fout, DumpOptions *dopt, void *dcontext)
 					/* append the list of column names if required */
 					if (dopt->column_inserts)
 					{
-						appendPQExpBufferStr(insertStmt, "(");
+						appendPQExpBufferChar(insertStmt, '(');
 						for (field = 0; field < nfields; field++)
 						{
 							if (field > 0)
@@ -10593,6 +10593,8 @@ dumpCast(Archive *fout, DumpOptions *dopt, CastInfo *cast)
 	PQExpBuffer delqry;
 	PQExpBuffer labelq;
 	FuncInfo   *funcInfo = NULL;
+	char	   *sourceType;
+	char	   *targetType;
 
 	/* Skip if not to be dumped */
 	if (!cast->dobj.dump || dopt->dataOnly)
@@ -10616,13 +10618,13 @@ dumpCast(Archive *fout, DumpOptions *dopt, CastInfo *cast)
 	delqry = createPQExpBuffer();
 	labelq = createPQExpBuffer();
 
+	sourceType = getFormattedTypeName(fout, cast->castsource, zeroAsNone);
+	targetType = getFormattedTypeName(fout, cast->casttarget, zeroAsNone);
 	appendPQExpBuffer(delqry, "DROP CAST (%s AS %s);\n",
-					getFormattedTypeName(fout, cast->castsource, zeroAsNone),
-				   getFormattedTypeName(fout, cast->casttarget, zeroAsNone));
+					  sourceType, targetType);
 
 	appendPQExpBuffer(defqry, "CREATE CAST (%s AS %s) ",
-					getFormattedTypeName(fout, cast->castsource, zeroAsNone),
-				   getFormattedTypeName(fout, cast->casttarget, zeroAsNone));
+					  sourceType, targetType);
 
 	switch (cast->castmethod)
 	{
@@ -10660,8 +10662,7 @@ dumpCast(Archive *fout, DumpOptions *dopt, CastInfo *cast)
 	appendPQExpBufferStr(defqry, ";\n");
 
 	appendPQExpBuffer(labelq, "CAST (%s AS %s)",
-					getFormattedTypeName(fout, cast->castsource, zeroAsNone),
-				   getFormattedTypeName(fout, cast->casttarget, zeroAsNone));
+					  sourceType, targetType);
 
 	if (dopt->binary_upgrade)
 		binary_upgrade_extension_member(defqry, &cast->dobj, labelq->data);
@@ -10678,6 +10679,9 @@ dumpCast(Archive *fout, DumpOptions *dopt, CastInfo *cast)
 	dumpComment(fout, dopt, labelq->data,
 				NULL, "",
 				cast->dobj.catId, 0, cast->dobj.dumpId);
+
+	free(sourceType);
+	free(targetType);
 
 	destroyPQExpBuffer(defqry);
 	destroyPQExpBuffer(delqry);
@@ -10696,6 +10700,7 @@ dumpTransform(Archive *fout, DumpOptions *dopt, TransformInfo *transform)
 	FuncInfo   *fromsqlFuncInfo = NULL;
 	FuncInfo   *tosqlFuncInfo = NULL;
 	char	   *lanname;
+	char	   *transformType;
 
 	/* Skip if not to be dumped */
 	if (!transform->dobj.dump || dopt->dataOnly)
@@ -10723,14 +10728,13 @@ dumpTransform(Archive *fout, DumpOptions *dopt, TransformInfo *transform)
 	labelq = createPQExpBuffer();
 
 	lanname = get_language_name(fout, transform->trflang);
+	transformType = getFormattedTypeName(fout, transform->trftype, zeroAsNone);
 
 	appendPQExpBuffer(delqry, "DROP TRANSFORM FOR %s LANGUAGE %s;\n",
-				  getFormattedTypeName(fout, transform->trftype, zeroAsNone),
-					  lanname);
+					  transformType, lanname);
 
 	appendPQExpBuffer(defqry, "CREATE TRANSFORM FOR %s LANGUAGE %s (",
-				  getFormattedTypeName(fout, transform->trftype, zeroAsNone),
-					  lanname);
+					  transformType, lanname);
 
 	if (!transform->trffromsql && !transform->trftosql)
 		write_msg(NULL, "WARNING: bogus transform definition, at least one of trffromsql and trftosql should be nonzero\n");
@@ -10777,8 +10781,7 @@ dumpTransform(Archive *fout, DumpOptions *dopt, TransformInfo *transform)
 	appendPQExpBuffer(defqry, ");\n");
 
 	appendPQExpBuffer(labelq, "TRANSFORM FOR %s LANGUAGE %s",
-				  getFormattedTypeName(fout, transform->trftype, zeroAsNone),
-					  lanname);
+					  transformType, lanname);
 
 	if (dopt->binary_upgrade)
 		binary_upgrade_extension_member(defqry, &transform->dobj, labelq->data);
@@ -10797,6 +10800,7 @@ dumpTransform(Archive *fout, DumpOptions *dopt, TransformInfo *transform)
 				transform->dobj.catId, 0, transform->dobj.dumpId);
 
 	free(lanname);
+	free(transformType);
 	destroyPQExpBuffer(defqry);
 	destroyPQExpBuffer(delqry);
 	destroyPQExpBuffer(labelq);
@@ -11172,7 +11176,7 @@ convertOperatorReference(Archive *fout, const char *opr)
  * caller should ensure we are in the proper schema, because the results
  * are search path dependent!
  */
-static const char *
+static char *
 convertTSFunction(Archive *fout, Oid funcOid)
 {
 	char	   *result;
@@ -11332,7 +11336,7 @@ dumpOpclass(Archive *fout, DumpOptions *dopt, OpclassInfo *opcinfo)
 		appendPQExpBufferStr(q, " FAMILY ");
 		if (strcmp(opcfamilynsp, opcinfo->dobj.namespace->dobj.name) != 0)
 			appendPQExpBuffer(q, "%s.", fmtId(opcfamilynsp));
-		appendPQExpBuffer(q, "%s", fmtId(opcfamilyname));
+		appendPQExpBufferStr(q, fmtId(opcfamilyname));
 	}
 	appendPQExpBufferStr(q, " AS\n    ");
 
@@ -13844,7 +13848,7 @@ dumpTableSchema(Archive *fout, DumpOptions *dopt, TableInfo *tbinfo)
 					if (actual_atts == 0)
 						appendPQExpBufferStr(q, " (");
 					else
-						appendPQExpBufferStr(q, ",");
+						appendPQExpBufferChar(q, ',');
 					appendPQExpBufferStr(q, "\n    ");
 					actual_atts++;
 
@@ -15277,13 +15281,12 @@ dumpEventTrigger(Archive *fout, DumpOptions *dopt, EventTriggerInfo *evtinfo)
 	appendPQExpBufferStr(query, fmtId(evtinfo->dobj.name));
 	appendPQExpBufferStr(query, " ON ");
 	appendPQExpBufferStr(query, fmtId(evtinfo->evtevent));
-	appendPQExpBufferStr(query, " ");
 
 	if (strcmp("", evtinfo->evttags) != 0)
 	{
 		appendPQExpBufferStr(query, "\n         WHEN TAG IN (");
 		appendPQExpBufferStr(query, evtinfo->evttags);
-		appendPQExpBufferStr(query, ") ");
+		appendPQExpBufferChar(query, ')');
 	}
 
 	appendPQExpBufferStr(query, "\n   EXECUTE PROCEDURE ");

@@ -29,6 +29,7 @@
 #include "nodes/makefuncs.h"
 #include "nodes/pg_list.h"
 #include "parser/parse_clause.h"
+#include "parser/parse_collate.h"
 #include "parser/parse_node.h"
 #include "parser/parse_relation.h"
 #include "rewrite/rewriteManip.h"
@@ -538,6 +539,10 @@ CreatePolicy(CreatePolicyStmt *stmt)
 										   EXPR_KIND_WHERE,
 										   "POLICY");
 
+	/* Fix up collation information */
+	assign_expr_collations(qual_pstate, qual);
+	assign_expr_collations(with_check_pstate, with_check_qual);
+
 	/* Open pg_policy catalog */
 	pg_policy_rel = heap_open(PolicyRelationId, RowExclusiveLock);
 
@@ -563,7 +568,7 @@ CreatePolicy(CreatePolicyStmt *stmt)
 	if (HeapTupleIsValid(policy_tuple))
 		ereport(ERROR,
 				(errcode(ERRCODE_DUPLICATE_OBJECT),
-				 errmsg("policy \"%s\" for relation \"%s\" already exists",
+				 errmsg("policy \"%s\" for table \"%s\" already exists",
 				 stmt->policy_name, RelationGetRelationName(target_table))));
 
 	values[Anum_pg_policy_polrelid - 1] = ObjectIdGetDatum(table_id);
@@ -681,6 +686,9 @@ AlterPolicy(AlterPolicyStmt *stmt)
 									EXPR_KIND_WHERE,
 									"POLICY");
 
+		/* Fix up collation information */
+		assign_expr_collations(qual_pstate, qual);
+
 		qual_parse_rtable = qual_pstate->p_rtable;
 		free_parsestate(qual_pstate);
 	}
@@ -700,6 +708,9 @@ AlterPolicy(AlterPolicyStmt *stmt)
 											   copyObject(stmt->with_check),
 											   EXPR_KIND_WHERE,
 											   "POLICY");
+
+		/* Fix up collation information */
+		assign_expr_collations(with_check_pstate, with_check_qual);
 
 		with_check_parse_rtable = with_check_pstate->p_rtable;
 		free_parsestate(with_check_pstate);
@@ -735,7 +746,7 @@ AlterPolicy(AlterPolicyStmt *stmt)
 	if (!HeapTupleIsValid(policy_tuple))
 		ereport(ERROR,
 				(errcode(ERRCODE_UNDEFINED_OBJECT),
-				 errmsg("policy \"%s\" on table \"%s\" does not exist",
+				 errmsg("policy \"%s\" for table \"%s\" does not exist",
 						stmt->policy_name,
 						RelationGetRelationName(target_table))));
 
@@ -977,7 +988,7 @@ get_relation_policy_oid(Oid relid, const char *policy_name, bool missing_ok)
 		if (!missing_ok)
 			ereport(ERROR,
 					(errcode(ERRCODE_UNDEFINED_OBJECT),
-					 errmsg("policy \"%s\" for table  \"%s\" does not exist",
+					 errmsg("policy \"%s\" for table \"%s\" does not exist",
 							policy_name, get_rel_name(relid))));
 
 		policy_oid = InvalidOid;

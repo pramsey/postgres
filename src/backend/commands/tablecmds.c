@@ -386,6 +386,8 @@ static void ATPostAlterTypeCleanup(List **wqueue, AlteredTableInfo *tab,
 static void ATPostAlterTypeParse(Oid oldId, Oid oldRelId, Oid refRelId,
 					 char *cmd, List **wqueue, LOCKMODE lockmode,
 					 bool rewrite);
+static void RebuildConstraintComment(AlteredTableInfo *tab, int pass,
+						 Oid objid, Relation rel, char *conname);
 static void TryReuseIndex(Oid oldId, IndexStmt *stmt);
 static void TryReuseForeignKey(Oid oldId, Constraint *con);
 static void change_owner_fix_column_acls(Oid relationOid,
@@ -3513,6 +3515,9 @@ ATExecCmd(List **wqueue, AlteredTableInfo *tab, Relation rel,
 			address =
 				ATExecAddConstraint(wqueue, tab, rel, (Constraint *) cmd->def,
 									false, true, lockmode);
+			break;
+		case AT_ReAddComment:	/* Re-add existing comment */
+			address = CommentObject((CommentStmt *) cmd->def);
 			break;
 		case AT_AddIndexConstraint:		/* ADD CONSTRAINT USING INDEX */
 			address = ATExecAddIndexConstraint(tab, rel, (IndexStmt *) cmd->def,
@@ -8645,72 +8650,126 @@ ATPostAlterTypeParse(Oid oldId, Oid oldRelId, Oid refRelId, char *cmd,
 		Node	   *stm = (Node *) lfirst(list_item);
 		AlteredTableInfo *tab;
 
-		switch (nodeTag(stm))
+		tab = ATGetQueueEntry(wqueue, rel);
+
+		if (IsA(stm, IndexStmt))
 		{
-			case T_IndexStmt:
+			IndexStmt  *stmt = (IndexStmt *) stm;
+			AlterTableCmd *newcmd;
+
+			if (!rewrite)
+				TryReuseIndex(oldId, stmt);
+			/* keep the index's comment */
+			stmt->idxcomment = GetComment(oldId, RelationRelationId, 0);
+
+			newcmd = makeNode(AlterTableCmd);
+			newcmd->subtype = AT_ReAddIndex;
+			newcmd->def = (Node *) stmt;
+			tab->subcmds[AT_PASS_OLD_INDEX] =
+				lappend(tab->subcmds[AT_PASS_OLD_INDEX], newcmd);
+		}
+		else if (IsA(stm, AlterTableStmt))
+		{
+			AlterTableStmt *stmt = (AlterTableStmt *) stm;
+			ListCell   *lcmd;
+
+			foreach(lcmd, stmt->cmds)
+			{
+				AlterTableCmd *cmd = (AlterTableCmd *) lfirst(lcmd);
+
+				if (cmd->subtype == AT_AddIndex)
 				{
-					IndexStmt  *stmt = (IndexStmt *) stm;
-					AlterTableCmd *newcmd;
+					IndexStmt  *indstmt;
+					Oid			indoid;
+
+					Assert(IsA(cmd->def, IndexStmt));
+
+					indstmt = (IndexStmt *) cmd->def;
+					indoid = get_constraint_index(oldId);
 
 					if (!rewrite)
-						TryReuseIndex(oldId, stmt);
+						TryReuseIndex(indoid, indstmt);
+					/* keep any comment on the index */
+					indstmt->idxcomment = GetComment(indoid,
+													 RelationRelationId, 0);
 
-					tab = ATGetQueueEntry(wqueue, rel);
-					newcmd = makeNode(AlterTableCmd);
-					newcmd->subtype = AT_ReAddIndex;
-					newcmd->def = (Node *) stmt;
+					cmd->subtype = AT_ReAddIndex;
 					tab->subcmds[AT_PASS_OLD_INDEX] =
-						lappend(tab->subcmds[AT_PASS_OLD_INDEX], newcmd);
-					break;
+						lappend(tab->subcmds[AT_PASS_OLD_INDEX], cmd);
+
+					/* recreate any comment on the constraint */
+					RebuildConstraintComment(tab,
+											 AT_PASS_OLD_INDEX,
+											 oldId,
+											 rel, indstmt->idxname);
 				}
-			case T_AlterTableStmt:
+				else if (cmd->subtype == AT_AddConstraint)
 				{
-					AlterTableStmt *stmt = (AlterTableStmt *) stm;
-					ListCell   *lcmd;
+					Constraint *con;
 
-					tab = ATGetQueueEntry(wqueue, rel);
-					foreach(lcmd, stmt->cmds)
-					{
-						AlterTableCmd *cmd = (AlterTableCmd *) lfirst(lcmd);
-						Constraint *con;
+					Assert(IsA(cmd->def, Constraint));
 
-						switch (cmd->subtype)
-						{
-							case AT_AddIndex:
-								Assert(IsA(cmd->def, IndexStmt));
-								if (!rewrite)
-									TryReuseIndex(get_constraint_index(oldId),
-												  (IndexStmt *) cmd->def);
-								cmd->subtype = AT_ReAddIndex;
-								tab->subcmds[AT_PASS_OLD_INDEX] =
-									lappend(tab->subcmds[AT_PASS_OLD_INDEX], cmd);
-								break;
-							case AT_AddConstraint:
-								Assert(IsA(cmd->def, Constraint));
-								con = (Constraint *) cmd->def;
-								con->old_pktable_oid = refRelId;
-								/* rewriting neither side of a FK */
-								if (con->contype == CONSTR_FOREIGN &&
-									!rewrite && tab->rewrite == 0)
-									TryReuseForeignKey(oldId, con);
-								cmd->subtype = AT_ReAddConstraint;
-								tab->subcmds[AT_PASS_OLD_CONSTR] =
-									lappend(tab->subcmds[AT_PASS_OLD_CONSTR], cmd);
-								break;
-							default:
-								elog(ERROR, "unexpected statement type: %d",
-									 (int) cmd->subtype);
-						}
-					}
-					break;
+					con = (Constraint *) cmd->def;
+					con->old_pktable_oid = refRelId;
+					/* rewriting neither side of a FK */
+					if (con->contype == CONSTR_FOREIGN &&
+						!rewrite && tab->rewrite == 0)
+						TryReuseForeignKey(oldId, con);
+					cmd->subtype = AT_ReAddConstraint;
+					tab->subcmds[AT_PASS_OLD_CONSTR] =
+						lappend(tab->subcmds[AT_PASS_OLD_CONSTR], cmd);
+
+					/* recreate any comment on the constraint */
+					RebuildConstraintComment(tab,
+											 AT_PASS_OLD_CONSTR,
+											 oldId,
+											 rel, con->conname);
 				}
-			default:
-				elog(ERROR, "unexpected statement type: %d",
-					 (int) nodeTag(stm));
+				else
+					elog(ERROR, "unexpected statement type: %d",
+						 (int) cmd->subtype);
+			}
 		}
+		else
+			elog(ERROR, "unexpected statement type: %d",
+				 (int) nodeTag(stm));
 	}
 
 	relation_close(rel, NoLock);
+}
+
+/*
+ * Subroutine for ATPostAlterTypeParse() to recreate a comment entry for
+ * a constraint that is being re-added.
+ */
+static void
+RebuildConstraintComment(AlteredTableInfo *tab, int pass, Oid objid,
+						 Relation rel, char *conname)
+{
+	CommentStmt *cmd;
+	char	   *comment_str;
+	AlterTableCmd *newcmd;
+
+	/* Look for comment for object wanted, and leave if none */
+	comment_str = GetComment(objid, ConstraintRelationId, 0);
+	if (comment_str == NULL)
+		return;
+
+	/* Build node CommentStmt */
+	cmd = makeNode(CommentStmt);
+	cmd->objtype = OBJECT_TABCONSTRAINT;
+	cmd->objname = list_make3(
+				   makeString(get_namespace_name(RelationGetNamespace(rel))),
+							  makeString(RelationGetRelationName(rel)),
+							  makeString(conname));
+	cmd->objargs = NIL;
+	cmd->comment = comment_str;
+
+	/* Append it to list of commands */
+	newcmd = makeNode(AlterTableCmd);
+	newcmd->subtype = AT_ReAddComment;
+	newcmd->def = (Node *) cmd;
+	tab->subcmds[pass] = lappend(tab->subcmds[pass], newcmd);
 }
 
 /*

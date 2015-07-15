@@ -49,6 +49,7 @@ typedef struct PgFdwRelationInfo
 	Cost		fdw_tuple_cost;
 	
 	/* PostGIS metadata */
+	List        *extensions;
 	bool        use_postgis;
 	Oid         postgis_oid;
 
@@ -76,6 +77,8 @@ extern void pgfdw_report_error(int elevel, PGresult *res, PGconn *conn,
 extern int ExtractConnectionOptions(List *defelems,
 						 const char **keywords,
 						 const char **values);
+extern bool extractExtensionList(char *extensionString,
+						 List **extensionOids);
 
 /* in deparse.c */
 extern void classifyConditions(PlannerInfo *root,

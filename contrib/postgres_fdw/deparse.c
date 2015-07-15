@@ -142,10 +142,8 @@ static void printRemoteParam(int paramindex, Oid paramtype, int32 paramtypmod,
 				 deparse_expr_cxt *context);
 static void printRemotePlaceholder(Oid paramtype, int32 paramtypmod,
 					   deparse_expr_cxt *context);
+static bool is_in_extension(Oid procid, PgFdwRelationInfo *fpinfo);
 
-
-/* PostGIS */
-static bool is_in_postgis(Oid procid, PgFdwRelationInfo *fpinfo);
 
 /*
  * Examine each qual clause in input_conds, and classify them into two groups,
@@ -241,7 +239,7 @@ foreign_expr_walker(Node *node,
 	Oid			collation;
 	FDWCollateState state;
 
-	/* Access PostGIS metadata from fpinfo on baserel */
+	/* Access extension metadata from fpinfo on baserel */
 	PgFdwRelationInfo *fpinfo = (PgFdwRelationInfo *)(glob_cxt->foreignrel->fdw_private);
 
 	/* Need do nothing for empty subexpressions */
@@ -376,7 +374,7 @@ foreign_expr_walker(Node *node,
 				 * can't be sent to remote because it might have incompatible
 				 * semantics on remote side.
 				 */
-				if (!is_builtin(fe->funcid) && (!is_in_postgis(fe->funcid, fpinfo)))
+				if (!is_builtin(fe->funcid) && (!is_in_extension(fe->funcid, fpinfo)))
 					return false;
 
 				/*
@@ -422,8 +420,7 @@ foreign_expr_walker(Node *node,
 				 * (If the operator is, surely its underlying function is
 				 * too.)
 				 */
-				if ( (!is_builtin(oe->opno)) && 
-				     (!is_in_postgis(oe->opno, fpinfo)) )
+				if ( (!is_builtin(oe->opno)) && (!is_in_extension(oe->opno, fpinfo)) )
 					return false;
 
 				/*
@@ -461,7 +458,7 @@ foreign_expr_walker(Node *node,
 				/*
 				 * Again, only built-in operators can be sent to remote.
 				 */
-				if (!is_builtin(oe->opno) && (!is_in_postgis(oe->opno, fpinfo)))
+				if (!is_builtin(oe->opno) && (!is_in_extension(oe->opno, fpinfo)))
 					return false;
 
 				/*
@@ -607,7 +604,7 @@ foreign_expr_walker(Node *node,
 	 * If result type of given expression is not built-in, it can't be sent to
 	 * remote because it might have incompatible semantics on remote side.
 	 */
-	if (check_type && !is_builtin(exprType(node)) && (!is_in_postgis(exprType(node), fpinfo)) )
+	if (check_type && !is_builtin(exprType(node)) && (!is_in_extension(exprType(node), fpinfo)) )
 		return false;
 
 	/*
@@ -687,10 +684,11 @@ is_builtin(Oid oid)
 
 
 /*
- * Returns true if given operator is part of postgis extension
+ * Returns true if given operator/function is part of an extension declared in the 
+ * server options.
  */
 static bool
-is_in_postgis(Oid procnumber, PgFdwRelationInfo *fpinfo)
+is_in_extension(Oid procnumber, PgFdwRelationInfo *fpinfo)
 {
 	static int nkeys = 1;
 	ScanKeyData key[nkeys];
@@ -699,8 +697,8 @@ is_in_postgis(Oid procnumber, PgFdwRelationInfo *fpinfo)
 	SysScanDesc scan;
 	int nresults = 0;
 
-	/* Always return false if we aren't supposed to use PostGIS */
-	if ( ! fpinfo->use_postgis )
+	/* Always return false if we don't have any declared extensions */
+	if ( ! fpinfo->extensions )
 		return false;
 
 	/* We need this relation to scan */
@@ -708,7 +706,7 @@ is_in_postgis(Oid procnumber, PgFdwRelationInfo *fpinfo)
 
 	/* Scan the system dependency table for a all entries this operator */
 	/* depends on, then iterate through and see if one of them */
-	/* is the postgis extension */
+	/* is a registered extension */
 	ScanKeyInit(&key[0],
 				Anum_pg_depend_objid,
 				BTEqualStrategyNumber, F_OIDEQ,
@@ -720,20 +718,30 @@ is_in_postgis(Oid procnumber, PgFdwRelationInfo *fpinfo)
 	while (HeapTupleIsValid(tup = systable_getnext(scan)))
 	{
 		Form_pg_depend foundDep = (Form_pg_depend) GETSTRUCT(tup);
-		
-		if ( foundDep->deptype == DEPENDENCY_EXTENSION && 
-		     foundDep->refobjid == fpinfo->postgis_oid )
+
+		if ( foundDep->deptype == DEPENDENCY_EXTENSION )
 		{
-			nresults++;
-			break;
+			List *extlist = fpinfo->extensions;
+			ListCell *ext;
+
+			foreach(ext, extlist)
+			{
+				Oid extension_oid = (Oid) lfirst(ext);
+				if ( foundDep->refobjid == extension_oid )
+				{
+					nresults++;
+				}
+			}
 		}
+		if ( nresults > 0 ) break;
 	}
 
 	systable_endscan(scan);
 	relation_close(depRel, RowExclusiveLock);
-	
-	return nresults > 0;	
+
+	return nresults > 0;
 }
+
 
 
 /*

@@ -384,6 +384,8 @@ postgresGetForeignRelSize(PlannerInfo *root,
 			fpinfo->fdw_startup_cost = strtod(defGetString(def), NULL);
 		else if (strcmp(def->defname, "fdw_tuple_cost") == 0)
 			fpinfo->fdw_tuple_cost = strtod(defGetString(def), NULL);
+		else if (strcmp(def->defname, "extensions") == 0)
+			extractExtensionList(defGetString(def), &(fpinfo->extensions));
 	}
 	foreach(lc, fpinfo->table->options)
 	{
@@ -391,13 +393,6 @@ postgresGetForeignRelSize(PlannerInfo *root,
 
 		if (strcmp(def->defname, "use_remote_estimate") == 0)
 			fpinfo->use_remote_estimate = defGetBoolean(def);
-		else if (strcmp(def->defname, "use_postgis") == 0)
-			fpinfo->use_postgis = defGetBoolean(def);
-	}
-
-	if ( fpinfo->use_postgis )
-	{
-		fpinfo->postgis_oid = get_extension_oid("postgis", true);
 	}
 
 	/*
@@ -2967,49 +2962,4 @@ conversion_error_callback(void *arg)
 				   RelationGetRelationName(errpos->rel));
 }
 
-/*
- * postgresReadExtensions
- *		Test whether analyzing this foreign table is supported
- */
-// static bool
-// conn_has_postgis(PGconn *conn)
-// {
-// 	StringInfoData sql;
-// 	PGresult   *volatile res = NULL;
-// 	bool has_postgis = false;
-//
-// 	/*
-// 	 * Construct command to get page count for relation.
-// 	 */
-// 	initStringInfo(&sql);
-//
-// 	appendStringInfoString(&sql, "SELECT oid, extname FROM pg_catalog.pg_extension WHERE extname = 'postgis'");
-//
-// 	/* In what follows, do not risk leaking any PGresults. */
-// 	PG_TRY();
-// 	{
-// 		res = PQexec(conn, sql.data);
-// 		if (PQresultStatus(res) != PGRES_TUPLES_OK)
-// 			pgfdw_report_error(ERROR, res, conn, false, sql.data);
-//
-// 		if (PQntuples(res) > 1 || PQnfields(res) != 2)
-// 			elog(ERROR, "unexpected result from conn_get_postgis_oid query");
-//
-// 		if (PQntuples(res) == 1)
-// 		{
-// 			has_postgis = true;
-// 		}
-//
-// 		PQclear(res);
-// 		res = NULL;
-// 	}
-// 	PG_CATCH();
-// 	{
-// 		if (res)
-// 			PQclear(res);
-// 		PG_RE_THROW();
-// 	}
-// 	PG_END_TRY();
-//
-// 	return has_postgis;
-// }
+

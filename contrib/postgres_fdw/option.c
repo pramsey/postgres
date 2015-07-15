@@ -19,6 +19,8 @@
 #include "catalog/pg_foreign_table.h"
 #include "catalog/pg_user_mapping.h"
 #include "commands/defrem.h"
+#include "commands/extension.h"
+#include "utils/builtins.h"
 
 
 /*
@@ -105,8 +107,7 @@ postgres_fdw_validator(PG_FUNCTION_ARGS)
 		 * Validate option value, when we can do so without any context.
 		 */
 		if (strcmp(def->defname, "use_remote_estimate") == 0 ||
-			strcmp(def->defname, "updatable") == 0 ||
-			strcmp(def->defname, "used_postgis") == 0)
+			strcmp(def->defname, "updatable") == 0 )
 		{
 			/* these accept only boolean values */
 			(void) defGetBoolean(def);
@@ -124,6 +125,10 @@ postgres_fdw_validator(PG_FUNCTION_ARGS)
 						(errcode(ERRCODE_SYNTAX_ERROR),
 						 errmsg("%s requires a non-negative numeric value",
 								def->defname)));
+		}
+		else if (strcmp(def->defname, "extensions") == 0)
+		{
+			extractExtensionList(defGetString(def), NULL);
 		}
 	}
 
@@ -155,7 +160,7 @@ InitPgFdwOptions(void)
 		{"updatable", ForeignServerRelationId, false},
 		{"updatable", ForeignTableRelationId, false},
 		/* use_remote_estimate is available on both server and table */
-		{"use_postgis", ForeignTableRelationId, false},
+		{"extensions", ForeignServerRelationId, false},
 		{NULL, InvalidOid, false}
 	};
 
@@ -295,4 +300,47 @@ ExtractConnectionOptions(List *defelems, const char **keywords,
 		}
 	}
 	return i;
+}
+
+
+bool 
+extractExtensionList(char *extensionString, List **extensionOids)
+{
+	List *extlist;
+	ListCell   *l;
+
+	if ( ! SplitIdentifierString(extensionString, ',', &extlist) )
+	{
+		list_free(extlist);
+		ereport(ERROR,
+			(errcode(ERRCODE_SYNTAX_ERROR),
+			 errmsg("unable to parse extension list '%s'",
+				extensionString)));
+	}
+
+	if ( extensionOids )
+		*extensionOids = NIL;
+
+	foreach(l, extlist)
+	{
+		char *extension_name = (char *) lfirst(l);
+		Oid extension_oid = get_extension_oid(extension_name, true);
+		if ( extension_oid == InvalidOid )
+		{
+			ereport(ERROR,
+				(errcode(ERRCODE_SYNTAX_ERROR),
+				 errmsg("the '%s' extension must be installed locally before it can be used on a remote server",
+					extension_name)));
+		}
+		else
+		{
+			if ( extensionOids )
+			{
+				*extensionOids = lappend_oid(*extensionOids, extension_oid);
+			}
+		}
+	}
+
+	list_free(extlist);
+	return true;
 }

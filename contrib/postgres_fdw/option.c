@@ -312,7 +312,7 @@ extractExtensionList(char *extensionString, List **extensionOids)
 		list_free(extlist);
 		ereport(ERROR,
 			(errcode(ERRCODE_SYNTAX_ERROR),
-			 errmsg("unable to parse extension list '%s'",
+			 errmsg("unable to parse extension list \"%s\"",
 				extensionString)));
 	}
 
@@ -327,7 +327,7 @@ extractExtensionList(char *extensionString, List **extensionOids)
 		{
 			ereport(ERROR,
 				(errcode(ERRCODE_SYNTAX_ERROR),
-				 errmsg("the '%s' extension must be installed locally before it can be used on a remote server",
+				 errmsg("the \"%s\" extension must be installed locally before it can be used on a remote server",
 					extension_name)));
 		}
 		else

@@ -1474,6 +1474,7 @@ typedef enum AlterTableType
 	AT_AddConstraint,			/* add constraint */
 	AT_AddConstraintRecurse,	/* internal to commands/tablecmds.c */
 	AT_ReAddConstraint,			/* internal to commands/tablecmds.c */
+	AT_ReAddComment,			/* internal to commands/tablecmds.c */
 	AT_AlterConstraint,			/* alter constraint */
 	AT_ValidateConstraint,		/* validate constraint */
 	AT_ValidateConstraintRecurse,		/* internal to commands/tablecmds.c */
@@ -2540,6 +2541,19 @@ typedef struct AlterOwnerStmt
 	List	   *objarg;			/* argument types, if applicable */
 	Node	   *newowner;		/* the new owner */
 } AlterOwnerStmt;
+
+
+/* ----------------------
+ *		Alter Operator Set Restrict, Join
+ * ----------------------
+ */
+typedef struct AlterOperatorStmt
+{
+	NodeTag		type;
+	List	   *opername;		/* operator name */
+	List	   *operargs;		/* operator's argument TypeNames */
+	List	   *options;		/* List of DefElem nodes */
+} AlterOperatorStmt;
 
 
 /* ----------------------

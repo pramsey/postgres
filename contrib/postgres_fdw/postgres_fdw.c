@@ -392,7 +392,10 @@ postgresGetForeignRelSize(PlannerInfo *root,
 		DefElem    *def = (DefElem *) lfirst(lc);
 
 		if (strcmp(def->defname, "use_remote_estimate") == 0)
+		{
 			fpinfo->use_remote_estimate = defGetBoolean(def);
+			break;				/* only need the one value */
+		}
 	}
 
 	/*
@@ -2961,5 +2964,3 @@ conversion_error_callback(void *arg)
 				   NameStr(tupdesc->attrs[errpos->cur_attno - 1]->attname),
 				   RelationGetRelationName(errpos->rel));
 }
-
-

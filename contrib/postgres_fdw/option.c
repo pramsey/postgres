@@ -107,7 +107,7 @@ postgres_fdw_validator(PG_FUNCTION_ARGS)
 		 * Validate option value, when we can do so without any context.
 		 */
 		if (strcmp(def->defname, "use_remote_estimate") == 0 ||
-			strcmp(def->defname, "updatable") == 0 )
+			strcmp(def->defname, "updatable") == 0)
 		{
 			/* these accept only boolean values */
 			(void) defGetBoolean(def);
@@ -159,7 +159,6 @@ InitPgFdwOptions(void)
 		/* updatable is available on both server and table */
 		{"updatable", ForeignServerRelationId, false},
 		{"updatable", ForeignTableRelationId, false},
-		/* use_remote_estimate is available on both server and table */
 		{"extensions", ForeignServerRelationId, false},
 		{NULL, InvalidOid, false}
 	};
@@ -301,7 +300,6 @@ ExtractConnectionOptions(List *defelems, const char **keywords,
 	}
 	return i;
 }
-
 
 bool 
 extractExtensionList(char *extensionString, List **extensionOids)

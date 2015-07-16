@@ -174,7 +174,6 @@ classifyConditions(PlannerInfo *root,
 	}
 }
 
-
 /*
  * Returns true if given expr is safe to evaluate on the foreign server.
  */
@@ -185,7 +184,7 @@ is_foreign_expr(PlannerInfo *root,
 {
 	foreign_glob_cxt glob_cxt;
 	foreign_loc_cxt loc_cxt;
-	
+
 	/*
 	 * Check that the expression consists of nodes that are safe to execute
 	 * remotely.
@@ -214,8 +213,6 @@ is_foreign_expr(PlannerInfo *root,
 	/* OK to evaluate on the remote server */
 	return true;
 }
-
-
 
 /*
  * Check if expression is safe to execute remotely, and return true if so.
@@ -374,7 +371,7 @@ foreign_expr_walker(Node *node,
 				 * can't be sent to remote because it might have incompatible
 				 * semantics on remote side.
 				 */
-				if (!is_builtin(fe->funcid) && (!is_in_extension(fe->funcid, fpinfo)))
+				if (!is_builtin(fe->funcid) && !is_in_extension(fe->funcid, fpinfo))
 					return false;
 
 				/*
@@ -420,7 +417,7 @@ foreign_expr_walker(Node *node,
 				 * (If the operator is, surely its underlying function is
 				 * too.)
 				 */
-				if ( (!is_builtin(oe->opno)) && (!is_in_extension(oe->opno, fpinfo)) )
+				if (!is_builtin(oe->opno) && !is_in_extension(oe->opno, fpinfo))
 					return false;
 
 				/*
@@ -458,7 +455,7 @@ foreign_expr_walker(Node *node,
 				/*
 				 * Again, only built-in operators can be sent to remote.
 				 */
-				if (!is_builtin(oe->opno) && (!is_in_extension(oe->opno, fpinfo)))
+				if (!is_builtin(oe->opno) && !is_in_extension(oe->opno, fpinfo))
 					return false;
 
 				/*
@@ -604,7 +601,7 @@ foreign_expr_walker(Node *node,
 	 * If result type of given expression is not built-in, it can't be sent to
 	 * remote because it might have incompatible semantics on remote side.
 	 */
-	if (check_type && !is_builtin(exprType(node)) && (!is_in_extension(exprType(node), fpinfo)) )
+	if (check_type && !is_builtin(exprType(node)) && !is_in_extension(exprType(node), fpinfo))
 		return false;
 
 	/*
@@ -655,8 +652,6 @@ foreign_expr_walker(Node *node,
 	/* It looks OK */
 	return true;
 }
-
-
 
 /*
  * Return true if given object is one of PostgreSQL's built-in objects.
@@ -741,8 +736,6 @@ is_in_extension(Oid procnumber, PgFdwRelationInfo *fpinfo)
 
 	return nresults > 0;
 }
-
-
 
 /*
  * Construct a simple SELECT statement that retrieves desired columns
@@ -1480,7 +1473,7 @@ deparseConst(Const *node, deparse_expr_cxt *context)
 	}
 	if (needlabel)
 		appendStringInfo(buf, "::%s",
-						 format_type_be_qualified(node->consttype));
+			format_type_be_qualified(node->consttype)); 
 }
 
 /*

@@ -48,17 +48,14 @@ typedef struct PgFdwRelationInfo
 	Cost		fdw_startup_cost;
 	Cost		fdw_tuple_cost;
 	
-	/* PostGIS metadata */
+	/* Optional extensions to support (list of oid) */
 	List        *extensions;
-	bool        use_postgis;
-	Oid         postgis_oid;
 
 	/* Cached catalog information. */
 	ForeignTable *table;
 	ForeignServer *server;
 	UserMapping *user;			/* only set in use_remote_estimate mode */
 } PgFdwRelationInfo;
-
 
 /* in postgres_fdw.c */
 extern int	set_transmission_modes(void);

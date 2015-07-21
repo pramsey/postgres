@@ -17,7 +17,6 @@
 #include "access/htup_details.h"
 #include "access/sysattr.h"
 #include "commands/defrem.h"
-#include "commands/extension.h"
 #include "commands/explain.h"
 #include "commands/vacuum.h"
 #include "foreign/fdwapi.h"

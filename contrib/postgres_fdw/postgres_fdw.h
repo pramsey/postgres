@@ -47,7 +47,7 @@ typedef struct PgFdwRelationInfo
 	bool		use_remote_estimate;
 	Cost		fdw_startup_cost;
 	Cost		fdw_tuple_cost;
-	
+
 	/* Optional extensions to support (list of oid) */
 	List        *extensions;
 
@@ -75,8 +75,11 @@ extern void pgfdw_report_error(int elevel, PGresult *res, PGconn *conn,
 extern int ExtractConnectionOptions(List *defelems,
 						 const char **keywords,
 						 const char **values);
+
+/* in shippable.c */
 extern bool extractExtensionList(char *extensionString,
-						 List **extensionOids);
+					List **extensionOids);
+extern bool is_shippable(Oid procnumber, PgFdwRelationInfo *fpinfo);
 
 /* in deparse.c */
 extern void classifyConditions(PlannerInfo *root,

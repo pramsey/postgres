@@ -34,15 +34,11 @@
 
 #include "postgres_fdw.h"
 
-#include "access/genam.h"
 #include "access/heapam.h"
 #include "access/htup_details.h"
 #include "access/sysattr.h"
 #include "access/transam.h"
-#include "catalog/dependency.h"
-#include "catalog/indexing.h"
 #include "catalog/pg_collation.h"
-#include "catalog/pg_depend.h"
 #include "catalog/pg_namespace.h"
 #include "catalog/pg_operator.h"
 #include "catalog/pg_proc.h"
@@ -53,10 +49,8 @@
 #include "optimizer/var.h"
 #include "parser/parsetree.h"
 #include "utils/builtins.h"
-#include "utils/fmgroids.h"
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
-#include "utils/snapmgr.h"
 #include "utils/syscache.h"
 
 
@@ -142,7 +136,6 @@ static void printRemoteParam(int paramindex, Oid paramtype, int32 paramtypmod,
 				 deparse_expr_cxt *context);
 static void printRemotePlaceholder(Oid paramtype, int32 paramtypmod,
 					   deparse_expr_cxt *context);
-static bool is_in_extension(Oid procid, PgFdwRelationInfo *fpinfo);
 
 
 /*
@@ -371,7 +364,7 @@ foreign_expr_walker(Node *node,
 				 * can't be sent to remote because it might have incompatible
 				 * semantics on remote side.
 				 */
-				if (!is_builtin(fe->funcid) && !is_in_extension(fe->funcid, fpinfo))
+				if (!is_builtin(fe->funcid) && !is_shippable(fe->funcid, fpinfo))
 					return false;
 
 				/*
@@ -417,7 +410,7 @@ foreign_expr_walker(Node *node,
 				 * (If the operator is, surely its underlying function is
 				 * too.)
 				 */
-				if (!is_builtin(oe->opno) && !is_in_extension(oe->opno, fpinfo))
+				if (!is_builtin(oe->opno) && !is_shippable(oe->opno, fpinfo))
 					return false;
 
 				/*
@@ -455,7 +448,7 @@ foreign_expr_walker(Node *node,
 				/*
 				 * Again, only built-in operators can be sent to remote.
 				 */
-				if (!is_builtin(oe->opno) && !is_in_extension(oe->opno, fpinfo))
+				if (!is_builtin(oe->opno) && !is_shippable(oe->opno, fpinfo))
 					return false;
 
 				/*
@@ -601,7 +594,7 @@ foreign_expr_walker(Node *node,
 	 * If result type of given expression is not built-in, it can't be sent to
 	 * remote because it might have incompatible semantics on remote side.
 	 */
-	if (check_type && !is_builtin(exprType(node)) && !is_in_extension(exprType(node), fpinfo))
+	if (check_type && !is_builtin(exprType(node)) && !is_shippable(exprType(node), fpinfo))
 		return false;
 
 	/*
@@ -675,66 +668,6 @@ static bool
 is_builtin(Oid oid)
 {
 	return (oid < FirstBootstrapObjectId);
-}
-
-
-/*
- * Returns true if given operator/function is part of an extension declared in the 
- * server options.
- */
-static bool
-is_in_extension(Oid procnumber, PgFdwRelationInfo *fpinfo)
-{
-	static int nkeys = 1;
-	ScanKeyData key[nkeys];
-	HeapTuple tup;
-	Relation depRel;
-	SysScanDesc scan;
-	int nresults = 0;
-
-	/* Always return false if we don't have any declared extensions */
-	if ( ! fpinfo->extensions )
-		return false;
-
-	/* We need this relation to scan */
-	depRel = heap_open(DependRelationId, RowExclusiveLock);
-
-	/* Scan the system dependency table for a all entries this operator */
-	/* depends on, then iterate through and see if one of them */
-	/* is a registered extension */
-	ScanKeyInit(&key[0],
-				Anum_pg_depend_objid,
-				BTEqualStrategyNumber, F_OIDEQ,
-				ObjectIdGetDatum(procnumber));
-
-	scan = systable_beginscan(depRel, DependDependerIndexId, true,
-							  GetCatalogSnapshot(depRel->rd_id), nkeys, key);
-
-	while (HeapTupleIsValid(tup = systable_getnext(scan)))
-	{
-		Form_pg_depend foundDep = (Form_pg_depend) GETSTRUCT(tup);
-
-		if ( foundDep->deptype == DEPENDENCY_EXTENSION )
-		{
-			List *extlist = fpinfo->extensions;
-			ListCell *ext;
-
-			foreach(ext, extlist)
-			{
-				Oid extension_oid = (Oid) lfirst(ext);
-				if ( foundDep->refobjid == extension_oid )
-				{
-					nresults++;
-				}
-			}
-		}
-		if ( nresults > 0 ) break;
-	}
-
-	systable_endscan(scan);
-	relation_close(depRel, RowExclusiveLock);
-
-	return nresults > 0;
 }
 
 /*
@@ -1473,7 +1406,7 @@ deparseConst(Const *node, deparse_expr_cxt *context)
 	}
 	if (needlabel)
 		appendStringInfo(buf, "::%s",
-			format_type_be_qualified(node->consttype)); 
+			format_type_be_qualified(node->consttype));
 }
 
 /*

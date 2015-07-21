@@ -20,8 +20,6 @@
 #include "catalog/pg_foreign_table.h"
 #include "catalog/pg_user_mapping.h"
 #include "commands/defrem.h"
-#include "commands/extension.h"
-#include "utils/builtins.h"
 
 
 /*
@@ -302,50 +300,4 @@ ExtractConnectionOptions(List *defelems, const char **keywords,
 		}
 	}
 	return i;
-}
-
-bool 
-extractExtensionList(char *extensionString, List **extensionOids)
-{
-	List *extlist;
-	ListCell   *l, *o;
-
-	if ( ! SplitIdentifierString(extensionString, ',', &extlist) )
-	{
-		list_free(extlist);
-		ereport(ERROR,
-			(errcode(ERRCODE_SYNTAX_ERROR),
-			 errmsg("unable to parse extension list \"%s\"",
-				extensionString)));
-	}
-
-	foreach(l, extlist)
-	{
-		const char *extension_name = (const char *) lfirst(l);
-		Oid extension_oid = get_extension_oid(extension_name, true);
-		if ( extension_oid == InvalidOid )
-		{
-			ereport(ERROR,
-				(errcode(ERRCODE_SYNTAX_ERROR),
-				 errmsg("the \"%s\" extension must be installed locally before it can be used on a remote server",
-					extension_name)));
-		}
-		else if ( extensionOids )
-		{
-			bool found = false;
-			/* Only add this extension Oid to the list */
-			/* if we don't already have it */
-			foreach(o, *extensionOids)
-			{
-				Oid oid = (Oid) lfirst(o);
-				if ( oid == extension_oid )
-					found = true;
-			}
-			if ( ! found )
-				*extensionOids = lappend_oid(*extensionOids, extension_oid);
-		}
-	}
-
-	list_free(extlist);
-	return true;
 }

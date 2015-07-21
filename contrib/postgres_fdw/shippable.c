@@ -1,16 +1,16 @@
 /*-------------------------------------------------------------------------
  *
- * nonbuiltin.c
- *	  Non-built-in procs cache management and utilities.
+ * shippable.c
+ *	  Non-built-in objects cache management and utilities.
  *
- * Non-built-in functions can only be passed to remote servers when
- * properly declared. The list of declared "safe" functions is cached
- * and refreshed here.
+ * Is a non-built-in shippable to the remote server? Only if
+ * the object is in an extension declared by the user in the
+ * OPTIONS of the wrapper or the server.
  *
  * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
- *	  contrib/postgres_fdw/nonbuiltin.c
+ *	  contrib/postgres_fdw/shippable.c
  *
  *-------------------------------------------------------------------------
  */
@@ -32,19 +32,19 @@
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
 
-/* Hash table for informations about remote procs we'll call */
+/* Hash table for informations about remote objects we'll call */
 static HTAB *ShippableCacheHash = NULL;
 
-/* procid is the lookup key, must appear first */
+/* objid is the lookup key, must appear first */
 typedef struct
 {
-	Oid	procid;
+	Oid	objid;
 } ShippableCacheKey;
 
 typedef struct
 {
 	ShippableCacheKey key; /* lookup key - must be first */
-	bool shippable;        /* extension the proc appears within, or InvalidOid if none */
+	bool shippable;        /* extension the object appears within, or InvalidOid if none */
 } ShippableCacheEntry;
 
 /*
@@ -69,7 +69,7 @@ InitializeShippableCache(void)
  * server options.
  */
 static bool
-lookup_shippable(Oid procnumber, List *extension_list)
+lookup_shippable(Oid objnumber, List *extension_list)
 {
 	static int nkeys = 1;
 	ScanKeyData key[nkeys];
@@ -85,13 +85,13 @@ lookup_shippable(Oid procnumber, List *extension_list)
 	/* We need this relation to scan */
 	depRel = heap_open(DependRelationId, RowExclusiveLock);
 
-	/* Scan the system dependency table for a all entries this operator */
+	/* Scan the system dependency table for all entries this object */
 	/* depends on, then iterate through and see if one of them */
-	/* is a registered extension */
+	/* is an extension declared by the user in the options */
 	ScanKeyInit(&key[0],
 				Anum_pg_depend_objid,
 				BTEqualStrategyNumber, F_OIDEQ,
-				ObjectIdGetDatum(procnumber));
+				ObjectIdGetDatum(objnumber));
 
 	scan = systable_beginscan(depRel, DependDependerIndexId, true,
 							  GetCatalogSnapshot(depRel->rd_id), nkeys, key);
@@ -124,15 +124,19 @@ lookup_shippable(Oid procnumber, List *extension_list)
 
 /*
  * is_shippable
- *     Is this procedure/op shippable to foreign server?
- *     Check cache first, then look-up whether proc/op is
- *     part of declared extension if not cached.
+ *     Is this object (proc/op/type) shippable to foreign server?
+ *     Check cache first, then look-up whether (proc/op/type) is
+ *     part of a declared extension if it is not cached.
  */
 bool
-is_shippable(Oid procnumber, PgFdwRelationInfo *fpinfo)
+is_shippable(Oid objnumber, PgFdwRelationInfo *fpinfo)
 {
 	ShippableCacheKey key;
 	ShippableCacheEntry *entry;
+
+	/* Always return false if we don't have any declared extensions */
+	if (!fpinfo->extensions)
+		return false;
 
 	/* Find existing cache, if any. */
 	if (!ShippableCacheHash)
@@ -141,7 +145,7 @@ is_shippable(Oid procnumber, PgFdwRelationInfo *fpinfo)
 	/* Zero out the key */
 	memset(&key, 0, sizeof(key));
 
-	key.procid = procnumber;
+	key.objid = objnumber;
 
 	entry = (ShippableCacheEntry *)
 				 hash_search(ShippableCacheHash,
@@ -153,10 +157,10 @@ is_shippable(Oid procnumber, PgFdwRelationInfo *fpinfo)
 	if (!entry)
 	{
 		/* Right now "shippability" is exclusively a function of whether */
-		/* the proc is in an extension declared by the user. In the future */
+		/* the obj (proc/op/type) is in an extension declared by the user. In the future */
 		/* we could additionally have a whitelist of functions declared one */
 		/* at a time. */
-		bool shippable = lookup_shippable(procnumber, fpinfo->extensions);
+		bool shippable = lookup_shippable(objnumber, fpinfo->extensions);
 
 		entry = (ShippableCacheEntry *)
 					 hash_search(ShippableCacheHash,

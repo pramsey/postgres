@@ -365,6 +365,7 @@ postgresGetForeignRelSize(PlannerInfo *root,
 	/* Look up foreign-table catalog info. */
 	fpinfo->table = GetForeignTable(foreigntableid);
 	fpinfo->server = GetForeignServer(fpinfo->table->serverid);
+	fpinfo->wrapper = GetForeignDataWrapper(fpinfo->server->fdwid);
 
 	/*
 	 * Extract user-settable option values.  Note that per-table setting of
@@ -373,7 +374,15 @@ postgresGetForeignRelSize(PlannerInfo *root,
 	fpinfo->use_remote_estimate = false;
 	fpinfo->fdw_startup_cost = DEFAULT_FDW_STARTUP_COST;
 	fpinfo->fdw_tuple_cost = DEFAULT_FDW_TUPLE_COST;
+	fpinfo->extensions = NIL;
 
+	foreach(lc, fpinfo->wrapper->options)
+	{
+		DefElem    *def = (DefElem *) lfirst(lc);
+
+		if (strcmp(def->defname, "extensions") == 0)
+			extractExtensionList(defGetString(def), &(fpinfo->extensions));
+	}
 	foreach(lc, fpinfo->server->options)
 	{
 		DefElem    *def = (DefElem *) lfirst(lc);

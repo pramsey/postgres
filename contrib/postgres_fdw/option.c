@@ -15,6 +15,7 @@
 #include "postgres_fdw.h"
 
 #include "access/reloptions.h"
+#include "catalog/pg_foreign_data_wrapper.h"
 #include "catalog/pg_foreign_server.h"
 #include "catalog/pg_foreign_table.h"
 #include "catalog/pg_user_mapping.h"
@@ -159,7 +160,9 @@ InitPgFdwOptions(void)
 		/* updatable is available on both server and table */
 		{"updatable", ForeignServerRelationId, false},
 		{"updatable", ForeignTableRelationId, false},
+		/* extensions is available on both wrapper and server */
 		{"extensions", ForeignServerRelationId, false},
+		{"extensions", ForeignDataWrapperRelationId, false},
 		{NULL, InvalidOid, false}
 	};
 
@@ -305,7 +308,7 @@ bool
 extractExtensionList(char *extensionString, List **extensionOids)
 {
 	List *extlist;
-	ListCell   *l;
+	ListCell   *l, *o;
 
 	if ( ! SplitIdentifierString(extensionString, ',', &extlist) )
 	{
@@ -316,12 +319,9 @@ extractExtensionList(char *extensionString, List **extensionOids)
 				extensionString)));
 	}
 
-	if ( extensionOids )
-		*extensionOids = NIL;
-
 	foreach(l, extlist)
 	{
-		char *extension_name = (char *) lfirst(l);
+		const char *extension_name = (const char *) lfirst(l);
 		Oid extension_oid = get_extension_oid(extension_name, true);
 		if ( extension_oid == InvalidOid )
 		{
@@ -330,12 +330,19 @@ extractExtensionList(char *extensionString, List **extensionOids)
 				 errmsg("the \"%s\" extension must be installed locally before it can be used on a remote server",
 					extension_name)));
 		}
-		else
+		else if ( extensionOids )
 		{
-			if ( extensionOids )
+			bool found = false;
+			/* Only add this extension Oid to the list */
+			/* if we don't already have it */
+			foreach(o, *extensionOids)
 			{
-				*extensionOids = lappend_oid(*extensionOids, extension_oid);
+				Oid oid = (Oid) lfirst(o);
+				if ( oid == extension_oid )
+					found = true;
 			}
+			if ( ! found )
+				*extensionOids = lappend_oid(*extensionOids, extension_oid);
 		}
 	}
 

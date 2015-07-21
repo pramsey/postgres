@@ -52,6 +52,7 @@ typedef struct PgFdwRelationInfo
 	List        *extensions;
 
 	/* Cached catalog information. */
+	ForeignDataWrapper *wrapper;
 	ForeignTable *table;
 	ForeignServer *server;
 	UserMapping *user;			/* only set in use_remote_estimate mode */

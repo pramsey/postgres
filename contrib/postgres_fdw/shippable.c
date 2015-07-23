@@ -29,8 +29,10 @@
 #include "utils/builtins.h"
 #include "utils/fmgroids.h"
 #include "utils/hsearch.h"
+#include "utils/inval.h"
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
+#include "utils/syscache.h"
 
 /* Hash table for informations about remote objects we'll call */
 static HTAB *ShippableCacheHash = NULL;
@@ -48,6 +50,28 @@ typedef struct
 } ShippableCacheEntry;
 
 /*
+ * InvalidateShippableCacheCallback
+ *		Flush all cache entries when pg_foreign_data_wrapper
+ *      or pg_foreign_server is updated.
+ */
+static void
+InvalidateShippableCacheCallback(Datum arg, int cacheid, uint32 hashvalue)
+{
+	HASH_SEQ_STATUS status;
+	ShippableCacheEntry *entry;
+
+	hash_seq_init(&status, ShippableCacheHash);
+	while ((entry = (ShippableCacheEntry *) hash_seq_search(&status)) != NULL)
+	{
+		if (hash_search(ShippableCacheHash,
+						(void *) &entry->key,
+						HASH_REMOVE,
+						NULL) == NULL)
+			elog(ERROR, "hash table corrupted");
+	}
+}
+
+/*
  * InitializeShippableCache
  *	    Initialize the cache of functions we can ship to remote server.
  */
@@ -62,6 +86,15 @@ InitializeShippableCache(void)
 	ctl.entrysize = sizeof(ShippableCacheEntry);
 	ShippableCacheHash =
 		hash_create("Shippable cache", 256, &ctl, HASH_ELEM);
+
+	/* Watch for invalidation events. */
+	CacheRegisterSyscacheCallback(FOREIGNDATAWRAPPEROID,
+								  InvalidateShippableCacheCallback,
+								  (Datum) 0);
+
+	CacheRegisterSyscacheCallback(FOREIGNSERVEROID,
+								  InvalidateShippableCacheCallback,
+								  (Datum) 0);
 }
 
 /*

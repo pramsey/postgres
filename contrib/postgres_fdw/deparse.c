@@ -670,6 +670,7 @@ is_builtin(Oid oid)
 	return (oid < FirstBootstrapObjectId);
 }
 
+
 /*
  * Construct a simple SELECT statement that retrieves desired columns
  * of the specified foreign table, and append it to "buf".  The output

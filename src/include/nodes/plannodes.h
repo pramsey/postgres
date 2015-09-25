@@ -71,6 +71,8 @@ typedef struct PlannedStmt
 	int			nParamExec;		/* number of PARAM_EXEC Params used */
 
 	bool		hasRowSecurity; /* row security applied? */
+
+	bool		parallelModeNeeded; /* parallel mode required to execute? */
 } PlannedStmt;
 
 /* macro for fetching the Plan associated with a SubPlan node */
@@ -287,7 +289,12 @@ typedef Scan SeqScan;
  *		table sample scan node
  * ----------------
  */
-typedef Scan SampleScan;
+typedef struct SampleScan
+{
+	Scan		scan;
+	/* use struct pointer to avoid including parsenodes.h here */
+	struct TableSampleClause *tablesample;
+} SampleScan;
 
 /* ----------------
  *		index scan node

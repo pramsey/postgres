@@ -372,9 +372,8 @@ flatten_rtes_walker(Node *node, PlannerGlobal *glob)
  *
  * In the flat rangetable, we zero out substructure pointers that are not
  * needed by the executor; this reduces the storage space and copying cost
- * for cached plans.  We keep only the tablesample field (which we'd otherwise
- * have to put in the plan tree, anyway); the ctename, alias and eref Alias
- * fields, which are needed by EXPLAIN; and the selectedCols, insertedCols and
+ * for cached plans.  We keep only the ctename, alias and eref Alias fields,
+ * which are needed by EXPLAIN, and the selectedCols, insertedCols and
  * updatedCols bitmaps, which are needed for executor-startup permissions
  * checking and for trigger event checking.
  */
@@ -388,6 +387,7 @@ add_rte_to_flat_rtable(PlannerGlobal *glob, RangeTblEntry *rte)
 	memcpy(newrte, rte, sizeof(RangeTblEntry));
 
 	/* zap unneeded sub-structure */
+	newrte->tablesample = NULL;
 	newrte->subquery = NULL;
 	newrte->joinaliasvars = NIL;
 	newrte->functions = NIL;
@@ -456,11 +456,13 @@ set_plan_refs(PlannerInfo *root, Plan *plan, int rtoffset)
 			{
 				SampleScan *splan = (SampleScan *) plan;
 
-				splan->scanrelid += rtoffset;
-				splan->plan.targetlist =
-					fix_scan_list(root, splan->plan.targetlist, rtoffset);
-				splan->plan.qual =
-					fix_scan_list(root, splan->plan.qual, rtoffset);
+				splan->scan.scanrelid += rtoffset;
+				splan->scan.plan.targetlist =
+					fix_scan_list(root, splan->scan.plan.targetlist, rtoffset);
+				splan->scan.plan.qual =
+					fix_scan_list(root, splan->scan.plan.qual, rtoffset);
+				splan->tablesample = (TableSampleClause *)
+					fix_scan_expr(root, (Node *) splan->tablesample, rtoffset);
 			}
 			break;
 		case T_IndexScan:
@@ -1097,7 +1099,7 @@ set_foreignscan_references(PlannerInfo *root,
 
 	if (fscan->fdw_scan_tlist != NIL || fscan->scan.scanrelid == 0)
 	{
-		/* Adjust tlist, qual, fdw_exprs to reference custom scan tuple */
+		/* Adjust tlist, qual, fdw_exprs to reference foreign scan tuple */
 		indexed_tlist *itlist = build_tlist_index(fscan->fdw_scan_tlist);
 
 		fscan->scan.plan.targetlist = (List *)
@@ -1241,7 +1243,7 @@ copyVar(Var *var)
  * This is code that is common to all variants of expression-fixing.
  * We must look up operator opcode info for OpExpr and related nodes,
  * add OIDs from regclass Const nodes into root->glob->relationOids, and
- * add catalog TIDs for user-defined functions into root->glob->invalItems.
+ * add PlanInvalItems for user-defined functions into root->glob->invalItems.
  * We also fill in column index lists for GROUPING() expressions.
  *
  * We assume it's okay to update opcode info in-place.  So this could possibly

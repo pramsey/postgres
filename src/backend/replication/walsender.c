@@ -249,7 +249,7 @@ InitWalSender(void)
  * process, similar to what transaction abort does in a regular backend.
  */
 void
-WalSndErrorCleanup()
+WalSndErrorCleanup(void)
 {
 	LWLockReleaseAll();
 
@@ -514,7 +514,7 @@ StartReplication(StartReplicationCmd *cmd)
 	if (cmd->slotname)
 	{
 		ReplicationSlotAcquire(cmd->slotname);
-		if (MyReplicationSlot->data.database != InvalidOid)
+		if (SlotIsLogical(MyReplicationSlot))
 			ereport(ERROR,
 					(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
 					 (errmsg("cannot use a logical replication slot for physical replication"))));
@@ -825,6 +825,14 @@ CreateReplicationSlot(CreateReplicationSlotCmd *cmd)
 		FreeDecodingContext(ctx);
 
 		ReplicationSlotPersist();
+	}
+	else if (cmd->kind == REPLICATION_KIND_PHYSICAL && cmd->reserve_wal)
+	{
+		ReplicationSlotReserveWal();
+
+		/* Write this slot to disk */
+		ReplicationSlotMarkDirty();
+		ReplicationSlotSave();
 	}
 
 	slot_name = NameStr(MyReplicationSlot->data.name);
@@ -1564,7 +1572,7 @@ ProcessStandbyReplyMessage(void)
 	 */
 	if (MyReplicationSlot && flushPtr != InvalidXLogRecPtr)
 	{
-		if (MyReplicationSlot->data.database != InvalidOid)
+		if (SlotIsLogical(MyReplicationSlot))
 			LogicalConfirmReceivedLocation(flushPtr);
 		else
 			PhysicalConfirmReceivedLocation(flushPtr);

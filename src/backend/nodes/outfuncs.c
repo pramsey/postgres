@@ -13,9 +13,11 @@
  * NOTES
  *	  Every node type that can appear in stored rules' parsetrees *must*
  *	  have an output function defined here (as well as an input function
- *	  in readfuncs.c).  For use in debugging, we also provide output
- *	  functions for nodes that appear in raw parsetrees, path, and plan trees.
- *	  These nodes however need not have input functions.
+ *	  in readfuncs.c).  In addition, plan nodes should have input and
+ *	  output functions so that they can be sent to parallel workers.
+ *	  For use in debugging, we also provide output functions for nodes
+ *	  that appear in raw parsetrees and path.  These nodes however need
+ *	  not have input functions.
  *
  *-------------------------------------------------------------------------
  */
@@ -256,6 +258,7 @@ _outPlannedStmt(StringInfo str, const PlannedStmt *node)
 	WRITE_NODE_FIELD(invalItems);
 	WRITE_INT_FIELD(nParamExec);
 	WRITE_BOOL_FIELD(hasRowSecurity);
+	WRITE_BOOL_FIELD(parallelModeNeeded);
 }
 
 /*
@@ -341,7 +344,7 @@ _outModifyTable(StringInfo str, const ModifyTable *node)
 	WRITE_NODE_FIELD(arbiterIndexes);
 	WRITE_NODE_FIELD(onConflictSet);
 	WRITE_NODE_FIELD(onConflictWhere);
-	WRITE_INT_FIELD(exclRelRTI);
+	WRITE_UINT_FIELD(exclRelRTI);
 	WRITE_NODE_FIELD(exclRelTlist);
 }
 
@@ -442,6 +445,16 @@ _outSeqScan(StringInfo str, const SeqScan *node)
 	WRITE_NODE_TYPE("SEQSCAN");
 
 	_outScanInfo(str, (const Scan *) node);
+}
+
+static void
+_outSampleScan(StringInfo str, const SampleScan *node)
+{
+	WRITE_NODE_TYPE("SAMPLESCAN");
+
+	_outScanInfo(str, (const Scan *) node);
+
+	WRITE_NODE_FIELD(tablesample);
 }
 
 static void
@@ -581,6 +594,7 @@ _outCustomScan(StringInfo str, const CustomScan *node)
 	_outScanInfo(str, (const Scan *) node);
 
 	WRITE_UINT_FIELD(flags);
+	WRITE_NODE_FIELD(custom_plans);
 	WRITE_NODE_FIELD(custom_exprs);
 	WRITE_NODE_FIELD(custom_private);
 	WRITE_NODE_FIELD(custom_scan_tlist);
@@ -589,14 +603,6 @@ _outCustomScan(StringInfo str, const CustomScan *node)
 	_outToken(str, node->methods->CustomName);
 	if (node->methods->TextOutCustomScan)
 		node->methods->TextOutCustomScan(str, node);
-}
-
-static void
-_outSampleScan(StringInfo str, const SampleScan *node)
-{
-	WRITE_NODE_TYPE("SAMPLESCAN");
-
-	_outScanInfo(str, (const Scan *) node);
 }
 
 static void
@@ -645,7 +651,7 @@ _outMergeJoin(StringInfo str, const MergeJoin *node)
 
 	appendStringInfoString(str, " :mergeNullsFirst");
 	for (i = 0; i < numCols; i++)
-		appendStringInfo(str, " %d", (int) node->mergeNullsFirst[i]);
+		appendStringInfo(str, " %s", booltostr(node->mergeNullsFirst[i]));
 }
 
 static void
@@ -1014,7 +1020,7 @@ _outGroupingFunc(StringInfo str, const GroupingFunc *node)
 	WRITE_NODE_FIELD(args);
 	WRITE_NODE_FIELD(refs);
 	WRITE_NODE_FIELD(cols);
-	WRITE_INT_FIELD(agglevelsup);
+	WRITE_UINT_FIELD(agglevelsup);
 	WRITE_LOCATION_FIELD(location);
 }
 
@@ -1530,9 +1536,9 @@ _outOnConflictExpr(StringInfo str, const OnConflictExpr *node)
 	WRITE_ENUM_FIELD(action, OnConflictAction);
 	WRITE_NODE_FIELD(arbiterElems);
 	WRITE_NODE_FIELD(arbiterWhere);
+	WRITE_OID_FIELD(constraint);
 	WRITE_NODE_FIELD(onConflictSet);
 	WRITE_NODE_FIELD(onConflictWhere);
-	WRITE_OID_FIELD(constraint);
 	WRITE_INT_FIELD(exclRelIndex);
 	WRITE_NODE_FIELD(exclRelTlist);
 }
@@ -1672,6 +1678,7 @@ _outCustomPath(StringInfo str, const CustomPath *node)
 	_outPathInfo(str, (const Path *) node);
 
 	WRITE_UINT_FIELD(flags);
+	WRITE_NODE_FIELD(custom_paths);
 	WRITE_NODE_FIELD(custom_private);
 	appendStringInfoString(str, " :methods ");
 	_outToken(str, node->methods->CustomName);
@@ -1783,6 +1790,8 @@ _outPlannerGlobal(StringInfo str, const PlannerGlobal *node)
 	WRITE_UINT_FIELD(lastRowMarkId);
 	WRITE_BOOL_FIELD(transientPlan);
 	WRITE_BOOL_FIELD(hasRowSecurity);
+	WRITE_BOOL_FIELD(parallelModeOK);
+	WRITE_BOOL_FIELD(parallelModeNeeded);
 }
 
 static void
@@ -1795,6 +1804,7 @@ _outPlannerInfo(StringInfo str, const PlannerInfo *node)
 	WRITE_NODE_FIELD(glob);
 	WRITE_UINT_FIELD(query_level);
 	WRITE_NODE_FIELD(plan_params);
+	WRITE_BITMAPSET_FIELD(outer_params);
 	WRITE_BITMAPSET_FIELD(all_baserels);
 	WRITE_BITMAPSET_FIELD(nullable_baserels);
 	WRITE_NODE_FIELD(join_rel_list);
@@ -2398,6 +2408,7 @@ _outWithCheckOption(StringInfo str, const WithCheckOption *node)
 
 	WRITE_ENUM_FIELD(kind, WCOKind);
 	WRITE_STRING_FIELD(relname);
+	WRITE_STRING_FIELD(polname);
 	WRITE_NODE_FIELD(qual);
 	WRITE_BOOL_FIELD(cascaded);
 }
@@ -2476,36 +2487,6 @@ _outCommonTableExpr(StringInfo str, const CommonTableExpr *node)
 	WRITE_NODE_FIELD(ctecoltypes);
 	WRITE_NODE_FIELD(ctecoltypmods);
 	WRITE_NODE_FIELD(ctecolcollations);
-}
-
-static void
-_outRangeTableSample(StringInfo str, const RangeTableSample *node)
-{
-	WRITE_NODE_TYPE("RANGETABLESAMPLE");
-
-	WRITE_NODE_FIELD(relation);
-	WRITE_STRING_FIELD(method);
-	WRITE_NODE_FIELD(repeatable);
-	WRITE_NODE_FIELD(args);
-}
-
-static void
-_outTableSampleClause(StringInfo str, const TableSampleClause *node)
-{
-	WRITE_NODE_TYPE("TABLESAMPLECLAUSE");
-
-	WRITE_OID_FIELD(tsmid);
-	WRITE_BOOL_FIELD(tsmseqscan);
-	WRITE_BOOL_FIELD(tsmpagemode);
-	WRITE_OID_FIELD(tsminit);
-	WRITE_OID_FIELD(tsmnextblock);
-	WRITE_OID_FIELD(tsmnexttuple);
-	WRITE_OID_FIELD(tsmexaminetuple);
-	WRITE_OID_FIELD(tsmend);
-	WRITE_OID_FIELD(tsmreset);
-	WRITE_OID_FIELD(tsmcost);
-	WRITE_NODE_FIELD(repeatable);
-	WRITE_NODE_FIELD(args);
 }
 
 static void
@@ -2592,6 +2573,16 @@ _outRangeTblFunction(StringInfo str, const RangeTblFunction *node)
 	WRITE_NODE_FIELD(funccoltypmods);
 	WRITE_NODE_FIELD(funccolcollations);
 	WRITE_BITMAPSET_FIELD(funcparams);
+}
+
+static void
+_outTableSampleClause(StringInfo str, const TableSampleClause *node)
+{
+	WRITE_NODE_TYPE("TABLESAMPLECLAUSE");
+
+	WRITE_OID_FIELD(tsmhandler);
+	WRITE_NODE_FIELD(args);
+	WRITE_NODE_FIELD(repeatable);
 }
 
 static void
@@ -2846,6 +2837,18 @@ _outRangeFunction(StringInfo str, const RangeFunction *node)
 }
 
 static void
+_outRangeTableSample(StringInfo str, const RangeTableSample *node)
+{
+	WRITE_NODE_TYPE("RANGETABLESAMPLE");
+
+	WRITE_NODE_FIELD(relation);
+	WRITE_NODE_FIELD(method);
+	WRITE_NODE_FIELD(args);
+	WRITE_NODE_FIELD(repeatable);
+	WRITE_LOCATION_FIELD(location);
+}
+
+static void
 _outConstraint(StringInfo str, const Constraint *node)
 {
 	WRITE_NODE_TYPE("CONSTRAINT");
@@ -3002,6 +3005,9 @@ _outNode(StringInfo str, const void *obj)
 			case T_SeqScan:
 				_outSeqScan(str, obj);
 				break;
+			case T_SampleScan:
+				_outSampleScan(str, obj);
+				break;
 			case T_IndexScan:
 				_outIndexScan(str, obj);
 				break;
@@ -3037,9 +3043,6 @@ _outNode(StringInfo str, const void *obj)
 				break;
 			case T_CustomScan:
 				_outCustomScan(str, obj);
-				break;
-			case T_SampleScan:
-				_outSampleScan(str, obj);
 				break;
 			case T_Join:
 				_outJoin(str, obj);
@@ -3393,12 +3396,6 @@ _outNode(StringInfo str, const void *obj)
 			case T_CommonTableExpr:
 				_outCommonTableExpr(str, obj);
 				break;
-			case T_RangeTableSample:
-				_outRangeTableSample(str, obj);
-				break;
-			case T_TableSampleClause:
-				_outTableSampleClause(str, obj);
-				break;
 			case T_SetOperationStmt:
 				_outSetOperationStmt(str, obj);
 				break;
@@ -3407,6 +3404,9 @@ _outNode(StringInfo str, const void *obj)
 				break;
 			case T_RangeTblFunction:
 				_outRangeTblFunction(str, obj);
+				break;
+			case T_TableSampleClause:
+				_outTableSampleClause(str, obj);
 				break;
 			case T_A_Expr:
 				_outAExpr(str, obj);
@@ -3449,6 +3449,9 @@ _outNode(StringInfo str, const void *obj)
 				break;
 			case T_RangeFunction:
 				_outRangeFunction(str, obj);
+				break;
+			case T_RangeTableSample:
+				_outRangeTableSample(str, obj);
 				break;
 			case T_Constraint:
 				_outConstraint(str, obj);

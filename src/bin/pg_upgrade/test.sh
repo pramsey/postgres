@@ -21,6 +21,10 @@ unset MAKELEVEL
 # authentication configuration.
 standard_initdb() {
 	"$1" -N
+	if [ -n "$TEMP_CONFIG" -a -r "$TEMP_CONFIG" ]
+	then
+		cat "$TEMP_CONFIG" >> "$PGDATA/postgresql.conf"
+	fi
 	../../test/regress/pg_regress --config-auth "$PGDATA"
 }
 
@@ -71,7 +75,6 @@ if [ "$1" = '--install' ]; then
 	libdir=$temp_install/$libdir
 
 	"$MAKE" -s -C ../.. install DESTDIR="$temp_install"
-	"$MAKE" -s -C . install DESTDIR="$temp_install"
 
 	# platform-specific magic to find the shared libraries; see pg_regress.c
 	LD_LIBRARY_PATH=$libdir:$LD_LIBRARY_PATH

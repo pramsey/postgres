@@ -7,7 +7,7 @@
   <note>
    <title>Release Date</title>
    <simpara>2015-??-??</simpara>
-   <simpara>Current as of 2015-06-01</simpara>
+   <simpara>Current as of 2015-08-03</simpara>
   </note>
 
   <sect2>
@@ -82,6 +82,16 @@
 
     <listitem>
 <!--
+2015-03-31 [0badb06] Bruce ..: pg_ctl:  change default shutdown mode from 'sma..
+-->
+     <para>
+      Change <application>pg_ctl</>'s default shutdown mode from
+      <literal>smart</> to <literal>fast</> (Bruce Momjian)
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
 2015-03-04 [1345cc6] Tom Lane: Use standard casting mechanism to convert type..
 -->
      <para>
@@ -91,7 +101,7 @@
      </para>
 
      <para>
-      This change causes conversions of booleans to strings to
+      This change causes conversions of Booleans to strings to
       produce <literal>true</> or <literal>false</>, not <literal>t</>
       or <literal>f</>.  Other type conversions may succeed in more cases
       than before; for example, assigning a numeric value <literal>3.9</> to
@@ -144,6 +154,24 @@
 
     <listitem>
 <!--
+2015-07-28 [6087d95] Andres..: Remove ssl renegotiation support.
+-->
+     <para>
+      Remove server configuration
+      parameter <varname>ssl_renegotiation_limit</>, which was deprecated
+      in earlier releases (Andres Freund)
+     </para>
+
+     <para>
+      While SSL renegotiation is a good idea in theory, it has caused enough
+      bugs to be considered a net negative in practice, and it is due to be
+      removed from future versions of the relevant standards.  We have
+      therefore removed support for it from <productname>PostgreSQL</>.
+     </para>
+    </listitem>
+
+    <listitem>
+<!--
 2014-11-05 [525a489] Tom Lane: Remove the last vestige of server-side autocomm..
 -->
      <para>
@@ -163,13 +191,14 @@
     </listitem>
 
     <listitem>
+<!--
+2015-07-17 [89ddd29] Andrew..: Support JSON negative array subscripts everywh..
+-->
      <para>
-      Allow <type>json</> and <type>jsonb</> extraction operators to
-      accept negative subscripts, which count from the end of JSON
-      arrays.  Historically, these operators yielded <literal>NULL</>
-      in the event of a negative subscript, because negative
-      subscripts were considered invalid.  (Peter Geoghegan, Andrew
-      Dunstan)
+      Allow <type>json</> and <type>jsonb</> array extraction operators to
+      accept negative subscripts, which count from the end of JSON arrays.
+      Previously, these operators returned <literal>NULL</> for negative
+      subscripts.  (Peter Geoghegan, Andrew Dunstan)
      </para>
     </listitem>
 
@@ -202,7 +231,7 @@
 -->
        <para>
         Add <link linkend="BRIN">Block Range Indexes</> (<acronym>BRIN</>)
-        (&Aacute;lvaro Herrera, Heikki Linnakangas, Emre Hasegeli)
+        (&Aacute;lvaro Herrera)
        </para>
 
        <para>
@@ -286,8 +315,9 @@ Add GUC and storage parameter to set the maximum size of GIN pending list.
 2015-05-13 [78efd5c] Robert..: Extend abbreviated key infrastructure to datum ..
 -->
        <para>
-        Improve the speed of sorting character and numeric fields (Peter
-        Geoghegan, Andrew Gierth, Robert Haas)
+        Improve the speed of sorting <type>VARCHAR</>, <type>TEXT</>,
+        and <type>NUMERIC</> fields (Peter Geoghegan, Andrew Gierth,
+        Robert Haas)
        </para>
       </listitem>
 
@@ -393,6 +423,17 @@ FIXME: Add Andres
 
       <listitem>
 <!--
+2015-04-27 [dcbf594]  Stephe..: Improve qual pushdown for RLS and SB views
+-->
+       <para>
+        Allow non-leakproof functions to be passed into security barrier
+        views if the function does not reference any table columns
+        (Dean Rasheed)
+       </para>
+      </listitem>
+
+      <listitem>
+<!--
 2014-11-04 [5028f22] Heikki..: Switch to CRC-32C in WAL and other places.
 2015-02-10 [025c024] Heikki..: Speed up CRC calculation using slicing-by-8 alg..
 2015-04-14 [3dc2d62] Heikki..: Use Intel SSE 4.2 CRC instructions where availa..
@@ -400,7 +441,7 @@ FIXME: Add Andres
 -->
        <para>
         Speed up <acronym>CRC</> (cyclic redundancy check) computations
-        (Abhijit Menon-Sen, Heikki Linnakangas)
+        and switch to CRC-32C (Abhijit Menon-Sen, Heikki Linnakangas)
        </para>
       </listitem>
 
@@ -419,7 +460,21 @@ FIXME: Add Andres
 <!--
 2014-07-01 [9f03ca9] Robert..: Avoid copying index tuples when building an ind..
 -->
-        Speed up CREATE INDEX by avoiding unneccessary memory copies (Robert Haas)
+        Speed up CREATE INDEX by avoiding unnecessary memory copies (Robert Haas)
+       </para>
+      </listitem>
+
+      <listitem>
+       <para>
+<!--
+2014-10-02 [3acc10c9] Robert..: Increase the number of buffer mapping partitio..
+-->
+        Increase the number of buffer mapping partitions (Amit Kapila,
+        Andres Freund, Robert Haas)
+       </para>
+
+       <para>
+        This improves performance for highly concurrent workloads.
        </para>
       </listitem>
 
@@ -591,13 +646,13 @@ FIXME: Add docs about restartpoint behaviour change
 -->
        <para>
         Allow recording of transaction
-        commit timestamps when configuration parameter <xref
+        commit time stamps when configuration parameter <xref
         linkend="guc-track-commit-timestamp">
         is enabled (&Aacute;lvaro Herrera, Petr Jel&iacute;nek)
        </para>
 
        <para>
-        Timestamp information can be accessed using functions <link
+        Time stamp information can be accessed using functions <link
         linkend="functions-commit-timestamp"><function>pg_xact_commit_timestamp()</></>
         and <function>pg_last_committed_xact()</>.
        </para>
@@ -798,12 +853,12 @@ FIXME: Add docs about restartpoint behaviour change
 FIXME: Correct description
 -->
        <para>
-        Allow <link linkend="pg-replication-origin-create">labeling</>
-        of the origin of logical replication changes (Andres Freund)
+        Allow <link linkend="pg-replication-origin-create">labeling</> of
+        the origin progress of logical replication changes (Andres Freund)
        </para>
 
        <para>
-        This helps with change tracking.
+        This is helpful when implementing replication solutions.
        </para>
       </listitem>
 
@@ -1055,9 +1110,9 @@ FIXME: Correct description
 2014-08-22 [f41872d] Alvaro..: Implement ALTER TABLE .. SET LOGGED / UNLOGGED
 -->
        <para>
-        Allow to convert a <acronym>WAL</acronym> logged table to an UNLOGGED
-        one, and the other way round with
-        <link linkend="SQL-ALTERTABLE"><command>ALTER TABLE .. SET LOGGED /
+        Allow changing of the <acronym>WAL</acronym>
+        logging status of a table after creation with <link
+        linkend="SQL-ALTERTABLE"><command>ALTER TABLE .. SET LOGGED /
         UNLOGGED</></> (Fabr&iacute;zio de Royes Mello)
        </para>
       </listitem>
@@ -1336,23 +1391,6 @@ FIXME: Better description?
 
      <listitem>
 <!--
-2015-01-06 [79af9a1] Peter ..: Fix namespace handling in xpath function
--->
-      <para>
-       Fix <type>XML</> <link
-       linkend="functions-xml-processing"><function>xpath()</></> handling
-       to return namespace declarations even if the namespace is in a
-       parent element (Ali Akbar)
-      </para>
-
-      <para>
-       Previously the namespace was not returned, potentially leading to
-       invalid <type>XML</>.
-      </para>
-     </listitem>
-
-     <listitem>
-<!--
 2014-10-21 [6f04368] Peter ..: Allow input format xxxx-xxxx-xxxx for macaddr ..
 -->
       <para>
@@ -1545,7 +1583,7 @@ FIXME: Add more specifics?
 2014-08-27 [8167a38] Jeff D..: Allow multibyte characters as escape in SIMILA..
 -->
        <para>
-        Allow multi-byte characters as escape in <link
+        Allow multibyte characters as escape in <link
         linkend="functions-similarto-regexp"><literal>SIMILAR TO</></>
         and <link linkend="functions-string-sql"><literal>SUBSTRING</></>
         (Jeff Davis)
@@ -1570,6 +1608,17 @@ FIXME: Add more specifics?
 
       <listitem>
 <!--
+2015-06-28 [cb2acb1] Heikki..: Add missing_ok option to the SQL functions for..
+-->
+       <para>
+        Add an optional <replaceable>missing_ok</> argument to <link
+        linkend="functions-admin-genfile-table"><function>pg_read_file()</></>
+        and related functions (Michael Paquier, Heikki Linnakangas)
+       </para>
+      </listitem>
+
+      <listitem>
+<!--
 2015-03-10 [865f14a] Robert..: Allow named parameters to be specified using =>..
 -->
        <para>
@@ -1581,7 +1630,7 @@ FIXME: Add more specifics?
         Previously only <literal>:=</> could be used.  This requires removing
         the possibility for <literal>=&gt;</> to be a user-defined operator.
         Creation of user-defined <literal>=&gt;</> operators has been issuing
-        warnings since Postgres 9.0.
+        warnings since PostgreSQL 9.0.
        </para>
       </listitem>
 
@@ -1591,7 +1640,7 @@ FIXME: Add more specifics?
 -->
        <para>
         Add <acronym>POSIX</>-compliant rounding for platforms that use
-        Postgres-supplied rounding functions (Pedro Gimeno Fortea)
+        PostgreSQL-supplied rounding functions (Pedro Gimeno Fortea)
        </para>
       </listitem>
 
@@ -1605,21 +1654,13 @@ FIXME: Add more specifics?
       <listitem>
 <!--
 2014-12-23 [d7ee82e] Alvaro..: Add SQL-callable pg_get_object_address
--->
-       <para>
-        Add function <link
-        linkend="functions-info-object-table"><function>pg_get_object_address()</></>
-        to return <type>OID</>s that uniquely identify an object
-        (&Aacute;lvaro Herrera)
-       </para>
-      </listitem>
-
-      <listitem>
-<!--
 2014-12-30 [a676201] Alvaro..: Add pg_identify_object_as_address
 -->
        <para>
         Add function <link
+        linkend="functions-info-object-table"><function>pg_get_object_address()</></>
+        to return <type>OID</>s that uniquely
+        identify an object, and function <link
         linkend="functions-info-object-table"><function>pg_identify_object_as_address()</></>
         to return object information based on <type>OID</>s (&Aacute;lvaro
         Herrera)
@@ -1653,7 +1694,7 @@ FIXME: Add more specifics?
        <para>
         Add <link
         linkend="monitoring-stats-funcs-table"><function>pg_stat_get_snapshot_timestamp()</></>
-        to output the timestamp of the statistics snapshot (Matt Kelly)
+        to output the time stamp of the statistics snapshot (Matt Kelly)
        </para>
 
        <para>
@@ -1984,7 +2025,7 @@ FIXME: Add more specifics?
         <para>
          Add <application>psql</> <link
          linkend="APP-PSQL-variables"><envar>PROMPT</></> variables option
-         (<literal>%l</>) to display the multi-line statement line number
+         (<literal>%l</>) to display the multiline statement line number
          (Sawada Masahiko)
         </para>
        </listitem>
@@ -2146,10 +2187,10 @@ FIXME: Add more specifics?
 
        <para>
         The remote snapshot must have been exported by
-        <function>pg_export_snapshot()</> or been defined when creating
-        a logical replication slot.  This can be used by parallel
-        <application>pg_dump</> to use a consistent snapshot across
-        <application>pg_dump</> processes.
+        <function>pg_export_snapshot()</> or logical replication slot
+        creation.  This can be used by another <application>pg_dump</> to
+        use a share a consistent snapshot across <application>pg_dump</>
+        processes.
        </para>
       </listitem>
 
@@ -2168,6 +2209,17 @@ FIXME: Add more specifics?
        </para>
       </listitem>
 
+      <listitem>
+<!--
+2015-06-04 [232cd63] Fujii ..: Remove -i/-ignore-version option from pg_dump..
+-->
+       <para>
+        Remove the long-ignored <option>-i</>/<option>--ignore-version</>
+        option from <application>pg_dump</>, <application>pg_dumpall</>,
+        and <application>pg_restore</> (Fujii Masao)
+       </para>
+      </listitem>
+
      </itemizedlist>
 
     </sect4>
@@ -2176,16 +2228,6 @@ FIXME: Add more specifics?
      <title><xref linkend="app-pg-ctl"></title>
 
      <itemizedlist>
-
-      <listitem>
-<!--
-2015-03-31 [0badb06] Bruce ..: pg_ctl:  change default shutdown mode from 'sma..
--->
-       <para>
-        Change <application>pg_ctl</>'s default shutdown mode from
-        <literal>smart</> to <literal>fast</> (Bruce Momjian)
-       </para>
-      </listitem>
 
       <listitem>
 <!--
@@ -2395,6 +2437,24 @@ FIXME: Improve description, link
 
       <listitem>
 <!--
+2015-05-08 [168d580] Andres..: Add support for INSERT ... ON CONFLICT DO NOTHI..
+2015-05-08 [2c8f483] Andres..: Represent columns requiring insert and update p..
+-->
+       <para>
+        Foreign tables can now take part in <command>INSERT ... ON CONFLICT
+        DO NOTHING</> queries (Peter Geoghegan, Heikki Linnakangas,
+        Andres Freund)
+       </para>
+
+       <para>
+        Foreign data wrappers must be modified to handle this.
+        <command>INSERT ... ON CONFLICT DO UPDATE</> is not supported on
+        foreign tables.
+       </para>
+      </listitem>
+
+      <listitem>
+<!--
 2014-12-18 [4a14f13] Tom Lane: Improve hash_create's API for selecting simple-..
 -->
        <para>
@@ -2459,7 +2519,7 @@ FIXME: Improve description, link
 2015-05-19 [0b28ea7] Tom Lane: Avoid collation dependence in indexes of syste..
 -->
        <para>
-        Change index opclass for columns <link
+        Change index operator class for columns <link
         linkend="catalog-pg-seclabel"><structname>pg_seclabel</></>.<structname>provider</>
         and <link
         linkend="catalog-pg-shseclabel"><structname>pg_shseclabel</></>.<structname>provider</>
@@ -2495,7 +2555,7 @@ FIXME: Improve description, link
 2014-12-08 [8001fe6] Simon ..: Windows: use GetSystemTimePreciseAsFileTime if ..
 -->
        <para>
-        Allow higher-precision timestamp resolution on <systemitem
+        Allow higher-precision time stamp resolution on <systemitem
         class="osname">Windows 8</> or <systemitem class="osname">Windows
         Server 2012</> and later Windows systems (Craig Ringer)
        </para>
@@ -2627,7 +2687,7 @@ FIXME: Improve description, link
 2014-06-30 [1b24887] Tom Lane: Allow multi-character source strings in contrib..
 -->
       <para>
-       Allow multi-character source strings in <link
+       Allow multicharacter source strings in <link
        linkend="unaccent"><application>unaccent</></> (Tom Lane)
       </para>
 

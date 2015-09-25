@@ -1271,7 +1271,8 @@ DROP TABLE check_fk_presence_1, check_fk_presence_2;
 --
 drop type lockmodes;
 create type lockmodes as enum (
- 'AccessShareLock'
+ 'SIReadLock'
+,'AccessShareLock'
 ,'RowShareLock'
 ,'RowExclusiveLock'
 ,'ShareUpdateExclusiveLock'
@@ -1331,6 +1332,11 @@ begin; alter table alterlock alter column f2 set (n_distinct = 1);
 select * from my_locks order by 1;
 rollback;
 
+-- test that mixing options with different lock levels works as expected
+begin; alter table alterlock set (autovacuum_enabled = off, fillfactor = 80);
+select * from my_locks order by 1;
+commit;
+
 begin; alter table alterlock alter column f2 set storage extended;
 select * from my_locks order by 1;
 rollback;
@@ -1362,6 +1368,39 @@ commit;
 begin;
 alter table alterlock2 validate constraint alterlock2nv;
 select * from my_locks order by 1;
+rollback;
+
+create or replace view my_locks as
+select case when c.relname like 'pg_toast%' then 'pg_toast' else c.relname end, max(mode::lockmodes) as max_lockmode
+from pg_locks l join pg_class c on l.relation = c.oid
+where virtualtransaction = (
+        select virtualtransaction
+        from pg_locks
+        where transactionid = txid_current()::integer)
+and locktype = 'relation'
+and relnamespace != (select oid from pg_namespace where nspname = 'pg_catalog')
+and c.relname = 'my_locks'
+group by c.relname;
+
+-- raise exception
+alter table my_locks set (autovacuum_enabled = false);
+alter view my_locks set (autovacuum_enabled = false);
+alter table my_locks reset (autovacuum_enabled);
+alter view my_locks reset (autovacuum_enabled);
+
+begin;
+alter view my_locks set (security_barrier=off);
+select * from my_locks order by 1;
+alter view my_locks reset (security_barrier);
+rollback;
+
+-- this test intentionally applies the ALTER TABLE command against a view, but
+-- uses a view option so we expect this to succeed. This form of SQL is
+-- accepted for historical reasons, as shown in the docs for ALTER VIEW
+begin;
+alter table my_locks set (security_barrier=off);
+select * from my_locks order by 1;
+alter table my_locks reset (security_barrier);
 rollback;
 
 -- cleanup
@@ -1724,3 +1763,34 @@ ALTER TABLE logged1 SET UNLOGGED; -- silently do nothing
 DROP TABLE logged3;
 DROP TABLE logged2;
 DROP TABLE logged1;
+
+-- test ADD COLUMN IF NOT EXISTS
+CREATE TABLE test_add_column(c1 integer);
+\d test_add_column
+ALTER TABLE test_add_column
+	ADD COLUMN c2 integer;
+\d test_add_column
+ALTER TABLE test_add_column
+	ADD COLUMN c2 integer; -- fail because c2 already exists
+\d test_add_column
+ALTER TABLE test_add_column
+	ADD COLUMN IF NOT EXISTS c2 integer; -- skipping because c2 already exists
+\d test_add_column
+ALTER TABLE test_add_column
+	ADD COLUMN c2 integer, -- fail because c2 already exists
+	ADD COLUMN c3 integer;
+\d test_add_column
+ALTER TABLE test_add_column
+	ADD COLUMN IF NOT EXISTS c2 integer, -- skipping because c2 already exists
+	ADD COLUMN c3 integer; -- fail because c3 already exists
+\d test_add_column
+ALTER TABLE test_add_column
+	ADD COLUMN IF NOT EXISTS c2 integer, -- skipping because c2 already exists
+	ADD COLUMN IF NOT EXISTS c3 integer; -- skipping because c3 already exists
+\d test_add_column
+ALTER TABLE test_add_column
+	ADD COLUMN IF NOT EXISTS c2 integer, -- skipping because c2 already exists
+	ADD COLUMN IF NOT EXISTS c3 integer, -- skipping because c3 already exists
+	ADD COLUMN c4 integer;
+\d test_add_column
+DROP TABLE test_add_column;

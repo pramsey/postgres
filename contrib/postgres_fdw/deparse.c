@@ -17,11 +17,12 @@
  * We do not consider that it is ever safe to send COLLATE expressions to
  * the remote server: it might not have the same collation names we do.
  * (Later we might consider it safe to send COLLATE "C", but even that would
- * fail on old remote servers.)  An expression is considered safe to send only
- * if all collations used in it are traceable to Var(s) of the foreign table.
- * That implies that if the remote server gets a different answer than we do,
- * the foreign table's columns are not marked with collations that match the
- * remote table's columns, which we can consider to be user error.
+ * fail on old remote servers.)  An expression is considered safe to send
+ * only if all operator/function input collations used in it are traceable to
+ * Var(s) of the foreign table.  That implies that if the remote server gets
+ * a different answer than we do, the foreign table's columns are not marked
+ * with collations that match the remote table's columns, which we can
+ * consider to be user error.
  *
  * Portions Copyright (c) 2012-2015, PostgreSQL Global Development Group
  *
@@ -69,9 +70,12 @@ typedef struct foreign_glob_cxt
  */
 typedef enum
 {
-	FDW_COLLATE_NONE,			/* expression is of a noncollatable type */
+	FDW_COLLATE_NONE,			/* expression is of a noncollatable type, or
+								 * it has default collation that is not
+								 * traceable to a foreign Var */
 	FDW_COLLATE_SAFE,			/* collation derives from a foreign Var */
-	FDW_COLLATE_UNSAFE			/* collation derives from something else */
+	FDW_COLLATE_UNSAFE			/* collation is non-default and derives from
+								 * something other than a foreign Var */
 } FDWCollateState;
 
 typedef struct foreign_loc_cxt
@@ -275,13 +279,24 @@ foreign_expr_walker(Node *node,
 				else
 				{
 					/* Var belongs to some other table */
-					if (var->varcollid != InvalidOid &&
-						var->varcollid != DEFAULT_COLLATION_OID)
-						return false;
-
-					/* We can consider that it doesn't set collation */
-					collation = InvalidOid;
-					state = FDW_COLLATE_NONE;
+					collation = var->varcollid;
+					if (collation == InvalidOid ||
+						collation == DEFAULT_COLLATION_OID)
+					{
+						/*
+						 * It's noncollatable, or it's safe to combine with a
+						 * collatable foreign Var, so set state to NONE.
+						 */
+						state = FDW_COLLATE_NONE;
+					}
+					else
+					{
+						/*
+						 * Do not fail right away, since the Var might appear
+						 * in a collation-insensitive context.
+						 */
+						state = FDW_COLLATE_UNSAFE;
+					}
 				}
 			}
 			break;
@@ -291,16 +306,16 @@ foreign_expr_walker(Node *node,
 
 				/*
 				 * If the constant has nondefault collation, either it's of a
-				 * non-builtin type, or it reflects folding of a CollateExpr;
-				 * either way, it's unsafe to send to the remote.
+				 * non-builtin type, or it reflects folding of a CollateExpr.
+				 * It's unsafe to send to the remote unless it's used in a
+				 * non-collation-sensitive context.
 				 */
-				if (c->constcollid != InvalidOid &&
-					c->constcollid != DEFAULT_COLLATION_OID)
-					return false;
-
-				/* Otherwise, we can consider that it doesn't set collation */
-				collation = InvalidOid;
-				state = FDW_COLLATE_NONE;
+				collation = c->constcollid;
+				if (collation == InvalidOid ||
+					collation == DEFAULT_COLLATION_OID)
+					state = FDW_COLLATE_NONE;
+				else
+					state = FDW_COLLATE_UNSAFE;
 			}
 			break;
 		case T_Param:
@@ -308,14 +323,14 @@ foreign_expr_walker(Node *node,
 				Param	   *p = (Param *) node;
 
 				/*
-				 * Collation handling is same as for Consts.
+				 * Collation rule is same as for Consts and non-foreign Vars.
 				 */
-				if (p->paramcollid != InvalidOid &&
-					p->paramcollid != DEFAULT_COLLATION_OID)
-					return false;
-
-				collation = InvalidOid;
-				state = FDW_COLLATE_NONE;
+				collation = p->paramcollid;
+				if (collation == InvalidOid ||
+					collation == DEFAULT_COLLATION_OID)
+					state = FDW_COLLATE_NONE;
+				else
+					state = FDW_COLLATE_UNSAFE;
 			}
 			break;
 		case T_ArrayRef:
@@ -351,6 +366,8 @@ foreign_expr_walker(Node *node,
 				else if (inner_cxt.state == FDW_COLLATE_SAFE &&
 						 collation == inner_cxt.collation)
 					state = FDW_COLLATE_SAFE;
+				else if (collation == DEFAULT_COLLATION_OID)
+					state = FDW_COLLATE_NONE;
 				else
 					state = FDW_COLLATE_UNSAFE;
 			}
@@ -396,6 +413,8 @@ foreign_expr_walker(Node *node,
 				else if (inner_cxt.state == FDW_COLLATE_SAFE &&
 						 collation == inner_cxt.collation)
 					state = FDW_COLLATE_SAFE;
+				else if (collation == DEFAULT_COLLATION_OID)
+					state = FDW_COLLATE_NONE;
 				else
 					state = FDW_COLLATE_UNSAFE;
 			}
@@ -437,6 +456,8 @@ foreign_expr_walker(Node *node,
 				else if (inner_cxt.state == FDW_COLLATE_SAFE &&
 						 collation == inner_cxt.collation)
 					state = FDW_COLLATE_SAFE;
+				else if (collation == DEFAULT_COLLATION_OID)
+					state = FDW_COLLATE_NONE;
 				else
 					state = FDW_COLLATE_UNSAFE;
 			}
@@ -486,7 +507,7 @@ foreign_expr_walker(Node *node,
 
 				/*
 				 * RelabelType must not introduce a collation not derived from
-				 * an input foreign Var.
+				 * an input foreign Var (same logic as for a real function).
 				 */
 				collation = r->resultcollid;
 				if (collation == InvalidOid)
@@ -494,6 +515,8 @@ foreign_expr_walker(Node *node,
 				else if (inner_cxt.state == FDW_COLLATE_SAFE &&
 						 collation == inner_cxt.collation)
 					state = FDW_COLLATE_SAFE;
+				else if (collation == DEFAULT_COLLATION_OID)
+					state = FDW_COLLATE_NONE;
 				else
 					state = FDW_COLLATE_UNSAFE;
 			}
@@ -543,7 +566,7 @@ foreign_expr_walker(Node *node,
 
 				/*
 				 * ArrayExpr must not introduce a collation not derived from
-				 * an input foreign Var.
+				 * an input foreign Var (same logic as for a function).
 				 */
 				collation = a->array_collid;
 				if (collation == InvalidOid)
@@ -551,6 +574,8 @@ foreign_expr_walker(Node *node,
 				else if (inner_cxt.state == FDW_COLLATE_SAFE &&
 						 collation == inner_cxt.collation)
 					state = FDW_COLLATE_SAFE;
+				else if (collation == DEFAULT_COLLATION_OID)
+					state = FDW_COLLATE_NONE;
 				else
 					state = FDW_COLLATE_UNSAFE;
 			}

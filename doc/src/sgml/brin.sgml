@@ -48,7 +48,7 @@
   geometrical types might store the bounding box for all the objects
   in the block range.
  </para>
-  
+
  <para>
   The size of the block range is determined at index creation time by
   the <literal>pages_per_range</> storage parameter.  The number of index
@@ -65,7 +65,7 @@
 
  <para>
   The core <productname>PostgreSQL</productname> distribution
-  includes the <acronym>BRIN</acronym> operator classes shown in 
+  includes the <acronym>BRIN</acronym> operator classes shown in
   <xref linkend="brin-builtin-opclasses-table">.
  </para>
 
@@ -532,7 +532,7 @@ typedef struct BrinOpcInfo
   The core distribution includes support for two types of operator classes:
   minmax and inclusion.  Operator class definitions using them are shipped for
   in-core data types as appropriate.  Additional operator classes can be
-  defined by the user for other datatypes using equivalent definitions,
+  defined by the user for other data types using equivalent definitions,
   without having to write any source code; appropriate catalog entries being
   declared is enough.  Note that assumptions about the semantics of operator
   strategies are embedded in the support procedures's source code.
@@ -547,8 +547,8 @@ typedef struct BrinOpcInfo
  </para>
 
  <para>
-  To write an operator class for a datatype that implements a totally
-  ordered set, it is possible to use the Minmax support procedures
+  To write an operator class for a data type that implements a totally
+  ordered set, it is possible to use the minmax support procedures
   alongside the corresponding operators, as shown in
   <xref linkend="brin-extensibility-minmax-table">.
   All operator class members (procedures and operators) are mandatory.

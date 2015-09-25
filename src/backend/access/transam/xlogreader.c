@@ -124,13 +124,10 @@ XLogReaderFree(XLogReaderState *state)
 {
 	int			block_id;
 
-	for (block_id = 0; block_id <= state->max_block_id; block_id++)
+	for (block_id = 0; block_id <= XLR_MAX_BLOCK_ID; block_id++)
 	{
-		if (state->blocks[block_id].in_use)
-		{
-			if (state->blocks[block_id].data)
-				pfree(state->blocks[block_id].data);
-		}
+		if (state->blocks[block_id].data)
+			pfree(state->blocks[block_id].data);
 	}
 	if (state->main_data)
 		pfree(state->main_data);

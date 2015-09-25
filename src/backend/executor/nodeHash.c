@@ -518,7 +518,7 @@ ExecChooseHashTableSize(double ntuples, int tupwidth, bool useskew,
 		 * overhead for the hash code, pointer to the next tuple, etc.
 		 */
 		bucket_size = (tupsize * NTUP_PER_BUCKET + sizeof(HashJoinTuple));
-		lbuckets = 1 << my_log2(hash_table_bytes / bucket_size);
+		lbuckets = 1L << my_log2(hash_table_bytes / bucket_size);
 		lbuckets = Min(lbuckets, max_pointers);
 		nbuckets = (int) lbuckets;
 		bucket_bytes = nbuckets * sizeof(HashJoinTuple);
@@ -541,6 +541,9 @@ ExecChooseHashTableSize(double ntuples, int tupwidth, bool useskew,
 		while (nbatch < minbatch)
 			nbatch <<= 1;
 	}
+
+	Assert(nbuckets > 0);
+	Assert(nbatch > 0);
 
 	*numbuckets = nbuckets;
 	*numbatches = nbatch;

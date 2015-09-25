@@ -1034,35 +1034,6 @@ include_dir 'conf.d'
       </listitem>
      </varlistentry>
 
-     <varlistentry id="guc-ssl-renegotiation-limit" xreflabel="ssl_renegotiation_limit">
-      <term><varname>ssl_renegotiation_limit</varname> (<type>integer</type>)
-      <indexterm>
-       <primary><varname>ssl_renegotiation_limit</> configuration parameter</primary>
-      </indexterm>
-      </term>
-      <listitem>
-       <para>
-        Specifies how much data can flow over an <acronym>SSL</>-encrypted
-        connection before renegotiation of the session keys will take
-        place. Renegotiation decreases an attacker's chances of doing
-        cryptanalysis when large amounts of traffic can be examined, but it
-        also carries a large performance penalty. The sum of sent and received
-        traffic is used to check the limit. If this parameter is set to 0,
-        renegotiation is disabled. The default is <literal>512MB</>.
-       </para>
-       <note>
-        <para>
-         SSL libraries from before November 2009 are insecure when using SSL
-         renegotiation, due to a vulnerability in the SSL protocol. As a
-         stop-gap fix for this vulnerability, some vendors shipped SSL
-         libraries incapable of doing renegotiation. If any such libraries
-         are in use on the client or server, SSL renegotiation should be
-         disabled.
-        </para>
-       </note>
-      </listitem>
-     </varlistentry>
-
      <varlistentry id="guc-ssl-ciphers" xreflabel="ssl_ciphers">
       <term><varname>ssl_ciphers</varname> (<type>string</type>)
       <indexterm>
@@ -1930,7 +1901,10 @@ include_dir 'conf.d'
         </para>
 
         <para>
-         The default is 1 on supported systems, otherwise 0.
+         The default is 1 on supported systems, otherwise 0.  This value can
+         be overridden for tables in a particular tablespace by setting the
+         tablespace parameter of the same name (see
+         <xref linkend="sql-altertablespace">).
         </para>
        </listitem>
       </varlistentry>
@@ -2019,7 +1993,7 @@ include_dir 'conf.d'
        <para>
         In <literal>logical</> level, the same information is logged as
         with <literal>hot_standby</>, plus information needed to allow
-        extracting logical changesets from the WAL. Using a level of
+        extracting logical change sets from the WAL. Using a level of
         <literal>logical</> will increase the WAL volume, particularly if many
         tables are configured for <literal>REPLICA IDENTITY FULL</literal> and
         many <command>UPDATE</> and <command>DELETE</> statements are
@@ -2547,7 +2521,7 @@ include_dir 'conf.d'
         mode. In <literal>always</> mode, all files restored from the archive
         or streamed with streaming replication will be archived (again). See
         <xref linkend="continuous-archiving-in-standby"> for details.
-       </para>  
+       </para>
        <para>
         <varname>archive_mode</> and <varname>archive_command</> are
         separate variables so that <varname>archive_command</> can be
@@ -3935,7 +3909,7 @@ local0.*    /var/log/postgresql
         listed in the Open Group's <ulink
         url="http://pubs.opengroup.org/onlinepubs/009695399/functions/strftime.html">strftime
         </ulink> specification.
-        Note that the system's <systemitem>strftime</systemitem> is not used
+        Note that the system's <function>strftime</function> is not used
         directly, so platform-specific (nonstandard) extensions do not work.
         The default is <literal>postgresql-%Y-%m-%d_%H%M%S.log</literal>.
        </para>
@@ -4656,6 +4630,11 @@ local0.*    /var/log/postgresql
             <row>
              <entry><literal>%m</literal></entry>
              <entry>Time stamp with milliseconds</entry>
+             <entry>no</entry>
+            </row>
+            <row>
+             <entry><literal>%n</literal></entry>
+             <entry>Time stamp with milliseconds (as a Unix epoch)</entry>
              <entry>no</entry>
             </row>
             <row>
@@ -5568,27 +5547,20 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
        <para>
         This variable controls if row security policies are to be applied
         to queries which are run against tables that have row security enabled.
-        The default is 'on'.  When set to 'on', all users, except superusers
-        and the owner of the table, will have the row policies for the table
-        applied to their queries.  The table owner and superuser can request
-        that row policies be applied to their queries by setting this to
-        'force'.  Lastly, this can also be set to 'off' which will bypass row
-        policies for the table, if possible, and error if not.
+        The default is <literal>on</>.  When set to <literal>on</>, all users,
+        except superusers and the owner of the table, will have the row
+        policies for the table applied to their queries.  When set to
+        <literal>off</>, queries will bypass row policies for the table, if
+        possible, and error if not.
        </para>
 
        <para>
         For a user who is not a superuser and not the table owner to bypass
-        row policies for the table, they must have the BYPASSRLS role attribute.
-        If this is set to 'off' and the user queries a table which has row
-        policies enabled and the user does not have the right to bypass
-        row policies then a permission denied error will be returned.
-       </para>
-
-       <para>
-        The allowed values of <varname>row_security</> are
-        <literal>on</> (apply normally - not to superuser or table owner),
-        <literal>off</> (fail if row security would be applied), and
-        <literal>force</> (apply always - even to superuser and table owner).
+        row policies for the table, they must have the <literal>BYPASSRLS</>
+        role attribute. If this is set to <literal>off</> and the user queries
+        a table which has row policies enabled and the user does not have the
+        right to bypass row policies then a permission denied error will be
+        returned.
        </para>
 
        <para>

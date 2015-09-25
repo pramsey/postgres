@@ -73,6 +73,7 @@ test: vacuum
 test: drop_if_exists
 test: updatable_views
 test: rolenames
+test: roleattributes
 test: sanity_check
 test: errors
 test: select
@@ -110,6 +111,7 @@ test: lock
 test: replica_identity
 test: rowsecurity
 test: object_address
+test: tablesample
 test: alter_generic
 test: alter_operator
 test: misc
@@ -156,4 +158,3 @@ test: with
 test: xml
 test: event_trigger
 test: stats
-test: tablesample

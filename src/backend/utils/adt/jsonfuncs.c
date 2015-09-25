@@ -977,26 +977,26 @@ get_array_start(void *state)
 	{
 		/* Initialize counting of elements in this array */
 		_state->array_cur_index[lex_level] = -1;
+
+		/* INT_MIN value is reserved to represent invalid subscript */
+		if (_state->path_indexes[lex_level] < 0 &&
+			_state->path_indexes[lex_level] != INT_MIN)
+		{
+			/* Negative subscript -- convert to positive-wise subscript */
+			int		nelements = json_count_array_elements(_state->lex);
+
+			if (-_state->path_indexes[lex_level] <= nelements)
+				_state->path_indexes[lex_level] += nelements;
+		}
 	}
 	else if (lex_level == 0 && _state->npath == 0)
 	{
 		/*
 		 * Special case: we should match the entire array.  We only need this
-		 * at outermost level because at nested levels the match will have
-		 * been started by the outer field or array element callback.
+		 * at the outermost level because at nested levels the match will
+		 * have been started by the outer field or array element callback.
 		 */
 		_state->result_start = _state->lex->token_start;
-	}
-
-	/* INT_MIN value is reserved to represent invalid subscript */
-	if (_state->path_indexes[lex_level] < 0 &&
-		_state->path_indexes[lex_level] != INT_MIN)
-	{
-		/* Negative subscript -- convert to positive-wise subscript */
-		int		nelements = json_count_array_elements(_state->lex);
-
-		if (-_state->path_indexes[lex_level] <= nelements)
-			_state->path_indexes[lex_level] += nelements;
 	}
 }
 
@@ -3359,12 +3359,18 @@ jsonb_concat(PG_FUNCTION_ARGS)
 			   *it2;
 
 	/*
-	 * If one of the jsonb is empty, just return other.
+	 * If one of the jsonb is empty, just return the other if it's not
+	 * scalar and both are of the same kind.  If it's a scalar or they are
+	 * of different kinds we need to perform the concatenation even if one is
+	 * empty.
 	 */
-	if (JB_ROOT_COUNT(jb1) == 0)
-		PG_RETURN_JSONB(jb2);
-	else if (JB_ROOT_COUNT(jb2) == 0)
-		PG_RETURN_JSONB(jb1);
+	if (JB_ROOT_IS_OBJECT(jb1) == JB_ROOT_IS_OBJECT(jb2))
+	{
+		if (JB_ROOT_COUNT(jb1) == 0 && !JB_ROOT_IS_SCALAR(jb2))
+			PG_RETURN_JSONB(jb2);
+		else if (JB_ROOT_COUNT(jb2) == 0 && !JB_ROOT_IS_SCALAR(jb1))
+			PG_RETURN_JSONB(jb1);
+	}
 
 	it1 = JsonbIteratorInit(&jb1->root);
 	it2 = JsonbIteratorInit(&jb2->root);

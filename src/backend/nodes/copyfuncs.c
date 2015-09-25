@@ -94,6 +94,7 @@ _copyPlannedStmt(const PlannedStmt *from)
 	COPY_NODE_FIELD(invalItems);
 	COPY_SCALAR_FIELD(nParamExec);
 	COPY_SCALAR_FIELD(hasRowSecurity);
+	COPY_SCALAR_FIELD(parallelModeNeeded);
 
 	return newnode;
 }
@@ -355,6 +356,27 @@ _copySeqScan(const SeqScan *from)
 	 * copy node superclass fields
 	 */
 	CopyScanFields((const Scan *) from, (Scan *) newnode);
+
+	return newnode;
+}
+
+/*
+ * _copySampleScan
+ */
+static SampleScan *
+_copySampleScan(const SampleScan *from)
+{
+	SampleScan *newnode = makeNode(SampleScan);
+
+	/*
+	 * copy node superclass fields
+	 */
+	CopyScanFields((const Scan *) from, (Scan *) newnode);
+
+	/*
+	 * copy remainder of node
+	 */
+	COPY_NODE_FIELD(tablesample);
 
 	return newnode;
 }
@@ -626,6 +648,7 @@ _copyCustomScan(const CustomScan *from)
 	 * copy remainder of node
 	 */
 	COPY_SCALAR_FIELD(flags);
+	COPY_NODE_FIELD(custom_plans);
 	COPY_NODE_FIELD(custom_exprs);
 	COPY_NODE_FIELD(custom_private);
 	COPY_NODE_FIELD(custom_scan_tlist);
@@ -637,22 +660,6 @@ _copyCustomScan(const CustomScan *from)
 	 * just reference the original one.
 	 */
 	COPY_SCALAR_FIELD(methods);
-
-	return newnode;
-}
-
-/*
- * _copySampleScan
- */
-static SampleScan *
-_copySampleScan(const SampleScan *from)
-{
-	SampleScan *newnode = makeNode(SampleScan);
-
-	/*
-	 * copy node superclass fields
-	 */
-	CopyScanFields((const Scan *) from, (Scan *) newnode);
 
 	return newnode;
 }
@@ -1920,9 +1927,9 @@ _copyOnConflictExpr(const OnConflictExpr *from)
 	COPY_SCALAR_FIELD(action);
 	COPY_NODE_FIELD(arbiterElems);
 	COPY_NODE_FIELD(arbiterWhere);
+	COPY_SCALAR_FIELD(constraint);
 	COPY_NODE_FIELD(onConflictSet);
 	COPY_NODE_FIELD(onConflictWhere);
-	COPY_SCALAR_FIELD(constraint);
 	COPY_SCALAR_FIELD(exclRelIndex);
 	COPY_NODE_FIELD(exclRelTlist);
 
@@ -2143,6 +2150,18 @@ _copyRangeTblFunction(const RangeTblFunction *from)
 	return newnode;
 }
 
+static TableSampleClause *
+_copyTableSampleClause(const TableSampleClause *from)
+{
+	TableSampleClause *newnode = makeNode(TableSampleClause);
+
+	COPY_SCALAR_FIELD(tsmhandler);
+	COPY_NODE_FIELD(args);
+	COPY_NODE_FIELD(repeatable);
+
+	return newnode;
+}
+
 static WithCheckOption *
 _copyWithCheckOption(const WithCheckOption *from)
 {
@@ -2150,6 +2169,7 @@ _copyWithCheckOption(const WithCheckOption *from)
 
 	COPY_SCALAR_FIELD(kind);
 	COPY_STRING_FIELD(relname);
+	COPY_STRING_FIELD(polname);
 	COPY_NODE_FIELD(qual);
 	COPY_SCALAR_FIELD(cascaded);
 
@@ -2267,40 +2287,6 @@ _copyCommonTableExpr(const CommonTableExpr *from)
 	COPY_NODE_FIELD(ctecoltypes);
 	COPY_NODE_FIELD(ctecoltypmods);
 	COPY_NODE_FIELD(ctecolcollations);
-
-	return newnode;
-}
-
-static RangeTableSample *
-_copyRangeTableSample(const RangeTableSample *from)
-{
-	RangeTableSample *newnode = makeNode(RangeTableSample);
-
-	COPY_NODE_FIELD(relation);
-	COPY_STRING_FIELD(method);
-	COPY_NODE_FIELD(repeatable);
-	COPY_NODE_FIELD(args);
-
-	return newnode;
-}
-
-static TableSampleClause *
-_copyTableSampleClause(const TableSampleClause *from)
-{
-	TableSampleClause *newnode = makeNode(TableSampleClause);
-
-	COPY_SCALAR_FIELD(tsmid);
-	COPY_SCALAR_FIELD(tsmseqscan);
-	COPY_SCALAR_FIELD(tsmpagemode);
-	COPY_SCALAR_FIELD(tsminit);
-	COPY_SCALAR_FIELD(tsmnextblock);
-	COPY_SCALAR_FIELD(tsmnexttuple);
-	COPY_SCALAR_FIELD(tsmexaminetuple);
-	COPY_SCALAR_FIELD(tsmend);
-	COPY_SCALAR_FIELD(tsmreset);
-	COPY_SCALAR_FIELD(tsmcost);
-	COPY_NODE_FIELD(repeatable);
-	COPY_NODE_FIELD(args);
 
 	return newnode;
 }
@@ -2528,6 +2514,20 @@ _copyRangeFunction(const RangeFunction *from)
 	COPY_NODE_FIELD(functions);
 	COPY_NODE_FIELD(alias);
 	COPY_NODE_FIELD(coldeflist);
+
+	return newnode;
+}
+
+static RangeTableSample *
+_copyRangeTableSample(const RangeTableSample *from)
+{
+	RangeTableSample *newnode = makeNode(RangeTableSample);
+
+	COPY_NODE_FIELD(relation);
+	COPY_NODE_FIELD(method);
+	COPY_NODE_FIELD(args);
+	COPY_NODE_FIELD(repeatable);
+	COPY_LOCATION_FIELD(location);
 
 	return newnode;
 }
@@ -4085,7 +4085,7 @@ _copyCreatePolicyStmt(const CreatePolicyStmt *from)
 
 	COPY_STRING_FIELD(policy_name);
 	COPY_NODE_FIELD(table);
-	COPY_SCALAR_FIELD(cmd);
+	COPY_STRING_FIELD(cmd_name);
 	COPY_NODE_FIELD(roles);
 	COPY_NODE_FIELD(qual);
 	COPY_NODE_FIELD(with_check);
@@ -4237,6 +4237,9 @@ copyObject(const void *from)
 		case T_SeqScan:
 			retval = _copySeqScan(from);
 			break;
+		case T_SampleScan:
+			retval = _copySampleScan(from);
+			break;
 		case T_IndexScan:
 			retval = _copyIndexScan(from);
 			break;
@@ -4272,9 +4275,6 @@ copyObject(const void *from)
 			break;
 		case T_CustomScan:
 			retval = _copyCustomScan(from);
-			break;
-		case T_SampleScan:
-			retval = _copySampleScan(from);
 			break;
 		case T_Join:
 			retval = _copyJoin(from);
@@ -4897,6 +4897,9 @@ copyObject(const void *from)
 		case T_RangeFunction:
 			retval = _copyRangeFunction(from);
 			break;
+		case T_RangeTableSample:
+			retval = _copyRangeTableSample(from);
+			break;
 		case T_TypeName:
 			retval = _copyTypeName(from);
 			break;
@@ -4920,6 +4923,9 @@ copyObject(const void *from)
 			break;
 		case T_RangeTblFunction:
 			retval = _copyRangeTblFunction(from);
+			break;
+		case T_TableSampleClause:
+			retval = _copyTableSampleClause(from);
 			break;
 		case T_WithCheckOption:
 			retval = _copyWithCheckOption(from);
@@ -4947,12 +4953,6 @@ copyObject(const void *from)
 			break;
 		case T_CommonTableExpr:
 			retval = _copyCommonTableExpr(from);
-			break;
-		case T_RangeTableSample:
-			retval = _copyRangeTableSample(from);
-			break;
-		case T_TableSampleClause:
-			retval = _copyTableSampleClause(from);
 			break;
 		case T_FuncWithArgs:
 			retval = _copyFuncWithArgs(from);

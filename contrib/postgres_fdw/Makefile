@@ -11,7 +11,7 @@ EXTENSION = postgres_fdw
 DATA = postgres_fdw--1.0.sql
 
 REGRESS = postgres_fdw shippable
-EXTRA_INSTALL = contrib/seg
+EXTRA_INSTALL = contrib/cube
 
 ifdef USE_PGXS
 PG_CONFIG = pg_config

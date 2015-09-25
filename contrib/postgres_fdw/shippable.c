@@ -239,7 +239,7 @@ extractExtensionList(char *extensionString, List **extensionOids)
 			ereport(ERROR,
 				(errcode(ERRCODE_SYNTAX_ERROR),
 				 errmsg("the \"%s\" extension must be installed locally "
-					    "before it can be used on a remote server",
+						"before it can be used on a remote server",
 					extension_name)));
 		}
 		/*

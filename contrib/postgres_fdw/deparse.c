@@ -381,7 +381,7 @@ foreign_expr_walker(Node *node,
 				 * can't be sent to remote because it might have incompatible
 				 * semantics on remote side.
 				 */
-				if (!is_builtin(fe->funcid) && !is_shippable(fe->funcid, fpinfo))
+				if (!is_builtin(fe->funcid) && !is_shippable(fe->funcid, fpinfo->extensions))
 					return false;
 
 				/*
@@ -429,7 +429,7 @@ foreign_expr_walker(Node *node,
 				 * (If the operator is, surely its underlying function is
 				 * too.)
 				 */
-				if (!is_builtin(oe->opno) && !is_shippable(oe->opno, fpinfo))
+				if (!is_builtin(oe->opno) && !is_shippable(oe->opno, fpinfo->extensions))
 					return false;
 
 				/*
@@ -469,7 +469,7 @@ foreign_expr_walker(Node *node,
 				/*
 				 * Again, only built-in operators can be sent to remote.
 				 */
-				if (!is_builtin(oe->opno) && !is_shippable(oe->opno, fpinfo))
+				if (!is_builtin(oe->opno) && !is_shippable(oe->opno, fpinfo->extensions))
 					return false;
 
 				/*
@@ -619,7 +619,7 @@ foreign_expr_walker(Node *node,
 	 * If result type of given expression is not built-in, it can't be sent to
 	 * remote because it might have incompatible semantics on remote side.
 	 */
-	if (check_type && !is_builtin(exprType(node)) && !is_shippable(exprType(node), fpinfo))
+	if (check_type && !is_builtin(exprType(node)) && !is_shippable(exprType(node), fpinfo->extensions))
 		return false;
 
 	/*
@@ -1354,6 +1354,9 @@ deparseConst(Const *node, deparse_expr_cxt *context)
 	bool		isfloat = false;
 	bool		needlabel;
 
+	/* Access extension metadata from fpinfo on baserel */
+	PgFdwRelationInfo *fpinfo = (PgFdwRelationInfo *)(context->foreignrel->fdw_private);
+
 	if (node->constisnull)
 	{
 		appendStringInfoString(buf, "NULL");
@@ -1431,8 +1434,16 @@ deparseConst(Const *node, deparse_expr_cxt *context)
 			break;
 	}
 	if (needlabel)
+	{
+		/*
+		 * References to extension types need to be fully qualified,
+		 * but references to built-in types shouldn't be.
+		 */
 		appendStringInfo(buf, "::%s",
-			format_type_be_qualified(node->consttype));
+			is_shippable(node->consttype, fpinfo->extensions) ?
+			format_type_be_qualified(node->consttype) :
+			format_type_with_typemod(node->consttype, node->consttypmod));
+	}
 }
 
 /*

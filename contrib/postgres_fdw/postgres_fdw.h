@@ -79,7 +79,7 @@ extern int ExtractConnectionOptions(List *defelems,
 /* in shippable.c */
 extern bool extractExtensionList(char *extensionString,
 					List **extensionOids);
-extern bool is_shippable(Oid procnumber, PgFdwRelationInfo *fpinfo);
+extern bool is_shippable(Oid procnumber, List *extension_list);
 
 /* in deparse.c */
 extern void classifyConditions(PlannerInfo *root,

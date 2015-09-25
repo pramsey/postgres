@@ -45,8 +45,10 @@ typedef struct
 
 typedef struct
 {
-	ShippableCacheKey key; /* lookup key - must be first */
-	bool shippable;        /* extension the object appears within, or InvalidOid if none */
+	/* lookup key - must be first */
+	ShippableCacheKey key;
+	/* extension the object appears within, or InvalidOid if none */
+	bool shippable;
 } ShippableCacheEntry;
 
 /*
@@ -98,8 +100,8 @@ InitializeShippableCache(void)
 }
 
 /*
- * Returns true if given operator/function is part of an extension declared in the
- * server options.
+ * Returns true if given operator/function is part of an extension declared in
+ * the server options.
  */
 static bool
 lookup_shippable(Oid objnumber, List *extension_list)
@@ -109,18 +111,20 @@ lookup_shippable(Oid objnumber, List *extension_list)
 	HeapTuple tup;
 	Relation depRel;
 	SysScanDesc scan;
-	int nresults = 0;
+	bool is_shippable = false;
 
 	/* Always return false if we don't have any declared extensions */
-	if (!extension_list)
+	if (extension_list == NIL)
 		return false;
 
 	/* We need this relation to scan */
 	depRel = heap_open(DependRelationId, RowExclusiveLock);
 
-	/* Scan the system dependency table for all entries this object */
-	/* depends on, then iterate through and see if one of them */
-	/* is an extension declared by the user in the options */
+	/*
+	 * Scan the system dependency table for all entries this object
+	 * depends on, then iterate through and see if one of them
+	 * is an extension declared by the user in the options
+	 */
 	ScanKeyInit(&key[0],
 				Anum_pg_depend_objid,
 				BTEqualStrategyNumber, F_OIDEQ,
@@ -133,26 +137,18 @@ lookup_shippable(Oid objnumber, List *extension_list)
 	{
 		Form_pg_depend foundDep = (Form_pg_depend) GETSTRUCT(tup);
 
-		if (foundDep->deptype == DEPENDENCY_EXTENSION)
+		if (foundDep->deptype == DEPENDENCY_EXTENSION &&
+			list_member_oid(extension_list, foundDep->refobjid))
 		{
-			ListCell *ext;
-
-			foreach(ext, extension_list)
-			{
-				Oid extension_oid = (Oid) lfirst(ext);
-				if (foundDep->refobjid == extension_oid)
-				{
-					nresults++;
-				}
-			}
+			is_shippable = true;
+			break;
 		}
-		if (nresults > 0) break;
 	}
 
 	systable_endscan(scan);
 	relation_close(depRel, RowExclusiveLock);
 
-	return nresults > 0;
+	return is_shippable;
 }
 
 /*
@@ -162,13 +158,13 @@ lookup_shippable(Oid objnumber, List *extension_list)
  *     part of a declared extension if it is not cached.
  */
 bool
-is_shippable(Oid objnumber, PgFdwRelationInfo *fpinfo)
+is_shippable(Oid objnumber, List *extension_list)
 {
 	ShippableCacheKey key;
 	ShippableCacheEntry *entry;
 
 	/* Always return false if we don't have any declared extensions */
-	if (!fpinfo->extensions)
+	if (extension_list == NIL)
 		return false;
 
 	/* Find existing cache, if any. */
@@ -189,11 +185,13 @@ is_shippable(Oid objnumber, PgFdwRelationInfo *fpinfo)
 	/* Not found in ShippableCacheHash cache.  Construct new entry. */
 	if (!entry)
 	{
-		/* Right now "shippability" is exclusively a function of whether */
-		/* the obj (proc/op/type) is in an extension declared by the user. In the future */
-		/* we could additionally have a whitelist of functions declared one */
-		/* at a time. */
-		bool shippable = lookup_shippable(objnumber, fpinfo->extensions);
+		/*
+		 * Right now "shippability" is exclusively a function of whether
+		 * the obj (proc/op/type) is in an extension declared by the user.
+		 * In the future we could additionally have a whitelist of functions
+		 * declared one at a time.
+		 */
+		bool shippable = lookup_shippable(objnumber, extension_list);
 
 		entry = (ShippableCacheEntry *)
 					 hash_search(ShippableCacheHash,
@@ -222,11 +220,10 @@ bool
 extractExtensionList(char *extensionString, List **extensionOids)
 {
 	List *extlist;
-	ListCell   *l, *o;
+	ListCell   *l;
 
 	if (!SplitIdentifierString(extensionString, ',', &extlist))
 	{
-		list_free(extlist);
 		ereport(ERROR,
 			(errcode(ERRCODE_SYNTAX_ERROR),
 			 errmsg("unable to parse extension list \"%s\"",
@@ -241,24 +238,22 @@ extractExtensionList(char *extensionString, List **extensionOids)
 		{
 			ereport(ERROR,
 				(errcode(ERRCODE_SYNTAX_ERROR),
-				 errmsg("the \"%s\" extension must be installed locally before it can be used on a remote server",
+				 errmsg("the \"%s\" extension must be installed locally "
+					    "before it can be used on a remote server",
 					extension_name)));
 		}
-		/* Option validation calls this function with NULL in the */
-		/* extensionOids parameter, to just do existence/syntax */
-		/* checking of the option */
+		/*
+		 * Option validation calls this function with NULL in the
+		 * extensionOids parameter, to just do existence/syntax
+		 * checking of the option
+		 */
 		else if (extensionOids)
 		{
-			bool found = false;
-			/* Only add this extension Oid to the list */
-			/* if we don't already have it in the list */
-			foreach(o, *extensionOids)
-			{
-				Oid oid = (Oid) lfirst(o);
-				if (oid == extension_oid)
-					found = true;
-			}
-			if (!found)
+			/*
+			 * Only add this extension Oid to the list
+			 * if we don't already have it in the list
+			 */
+			if (!list_member_oid(*extensionOids, extension_oid))
 				*extensionOids = lappend_oid(*extensionOids, extension_oid);
 		}
 	}

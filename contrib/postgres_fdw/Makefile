@@ -10,6 +10,7 @@ SHLIB_LINK = $(libpq)
 EXTENSION = postgres_fdw
 DATA = postgres_fdw--1.0.sql
 
+# Note: shippable tests depend on postgres_fdw tests setup
 REGRESS = postgres_fdw shippable
 EXTRA_INSTALL = contrib/cube
 

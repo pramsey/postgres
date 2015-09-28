@@ -1,11 +1,10 @@
 /*-------------------------------------------------------------------------
  *
  * shippable.c
- *	  Non-built-in objects cache management and utilities.
+ *	  Facility to track database objects shippable to a foreign server.
  *
- * Is a non-built-in shippable to the remote server? Only if
- * the object is in an extension declared by the user in the
- * OPTIONS of the wrapper or the server.
+ * Determine if functions and operators for non-built-in types/functions/ops
+ * are shippable to the remote server.
  *
  * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
  *

@@ -66,9 +66,4 @@ EXPLAIN VERBOSE SELECT c2 FROM shft1 WHERE cube_dim(c3) = 1 LIMIT 2;
 SELECT c2 FROM shft1 WHERE cube_dim(c3) = 1 LIMIT 2;
 
 
--- ===================================================================
--- clean up
--- ===================================================================
-
-
 

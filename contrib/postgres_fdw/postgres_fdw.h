@@ -77,8 +77,7 @@ extern int ExtractConnectionOptions(List *defelems,
 						 const char **values);
 
 /* in shippable.c */
-extern bool extractExtensionList(char *extensionString,
-					List **extensionOids);
+extern List* extractExtensionList(char *extensionString, bool populateList);
 extern bool is_shippable(Oid procnumber, List *extension_list);
 
 /* in deparse.c */

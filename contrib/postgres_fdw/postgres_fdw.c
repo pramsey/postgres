@@ -375,13 +375,6 @@ postgresGetForeignRelSize(PlannerInfo *root,
 	fpinfo->fdw_tuple_cost = DEFAULT_FDW_TUPLE_COST;
 	fpinfo->extensions = NIL;
 
-	foreach(lc, fpinfo->wrapper->options)
-	{
-		DefElem    *def = (DefElem *) lfirst(lc);
-
-		if (strcmp(def->defname, "extensions") == 0)
-			extractExtensionList(defGetString(def), &(fpinfo->extensions));
-	}
 	foreach(lc, fpinfo->server->options)
 	{
 		DefElem    *def = (DefElem *) lfirst(lc);
@@ -393,7 +386,7 @@ postgresGetForeignRelSize(PlannerInfo *root,
 		else if (strcmp(def->defname, "fdw_tuple_cost") == 0)
 			fpinfo->fdw_tuple_cost = strtod(defGetString(def), NULL);
 		else if (strcmp(def->defname, "extensions") == 0)
-			extractExtensionList(defGetString(def), &(fpinfo->extensions));
+			fpinfo->extensions = extractExtensionList(defGetString(def), true);
 	}
 	foreach(lc, fpinfo->table->options)
 	{

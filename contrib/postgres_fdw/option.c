@@ -127,7 +127,7 @@ postgres_fdw_validator(PG_FUNCTION_ARGS)
 		}
 		else if (strcmp(def->defname, "extensions") == 0)
 		{
-			extractExtensionList(defGetString(def), NULL);
+			extractExtensionList(defGetString(def), false);
 		}
 	}
 

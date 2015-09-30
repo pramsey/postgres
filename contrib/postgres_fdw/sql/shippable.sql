@@ -65,5 +65,13 @@ SELECT cube_dim(c3) FROM shft1 WHERE c3 && '(1.5),(2.5)'::cube;
 EXPLAIN VERBOSE SELECT c2 FROM shft1 WHERE cube_dim(c3) = 1 LIMIT 2;
 SELECT c2 FROM shft1 WHERE cube_dim(c3) = 1 LIMIT 2;
 
+-- ===================================================================
+-- clean up
+-- ===================================================================
 
+DROP FOREIGN TABLE shft1;
+DROP TABLE "SH 1"."TBL 1";
+DROP SCHEMA "SH 1";
+DROP EXTENSION cube;
+ALTER SERVER loopback OPTIONS (DROP extensions);
 

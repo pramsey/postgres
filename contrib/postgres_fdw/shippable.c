@@ -209,16 +209,17 @@ is_shippable(Oid objnumber, List *extension_list)
 
 /*
  * extractExtensionList
- *     Parse a comma-separated string and fill out the list
- *     argument with the Oids of the extensions in the string.
+ *     Parse a comma-separated string and return a List
+ *     of the Oids of the extensions in the string.
  *     If an extenstion provided cannot be looked up in the
  *     catalog (it hasn't been installed or doesn't exist)
  *     then throw an error.
  */
-bool
-extractExtensionList(char *extensionString, List **extensionOids)
+List *
+extractExtensionList(char *extensionString, bool populateList)
 {
 	List *extlist;
+	List *extensionOids = NIL;
 	ListCell   *l;
 
 	if (!SplitIdentifierString(extensionString, ',', &extlist))
@@ -246,17 +247,17 @@ extractExtensionList(char *extensionString, List **extensionOids)
 		 * extensionOids parameter, to just do existence/syntax
 		 * checking of the option
 		 */
-		else if (extensionOids)
+		else if (populateList)
 		{
 			/*
 			 * Only add this extension Oid to the list
 			 * if we don't already have it in the list
 			 */
-			if (!list_member_oid(*extensionOids, extension_oid))
-				*extensionOids = lappend_oid(*extensionOids, extension_oid);
+			if (!list_member_oid(extensionOids, extension_oid))
+				extensionOids = lappend_oid(extensionOids, extension_oid);
 		}
 	}
 
 	list_free(extlist);
-	return true;
+	return extensionOids;
 }

@@ -15,6 +15,7 @@
 #include "postgres_fdw.h"
 
 #include "access/reloptions.h"
+#include "catalog/pg_foreign_data_wrapper.h"
 #include "catalog/pg_foreign_server.h"
 #include "catalog/pg_foreign_table.h"
 #include "catalog/pg_user_mapping.h"
@@ -124,6 +125,10 @@ postgres_fdw_validator(PG_FUNCTION_ARGS)
 						 errmsg("%s requires a non-negative numeric value",
 								def->defname)));
 		}
+		else if (strcmp(def->defname, "extensions") == 0)
+		{
+			extractExtensionList(defGetString(def), false);
+		}
 	}
 
 	PG_RETURN_VOID();
@@ -153,6 +158,9 @@ InitPgFdwOptions(void)
 		/* updatable is available on both server and table */
 		{"updatable", ForeignServerRelationId, false},
 		{"updatable", ForeignTableRelationId, false},
+		/* extensions is available on both wrapper and server */
+		{"extensions", ForeignServerRelationId, false},
+		{"extensions", ForeignDataWrapperRelationId, false},
 		{NULL, InvalidOid, false}
 	};
 

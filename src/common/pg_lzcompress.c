@@ -680,7 +680,7 @@ pglz_compress(const char *source, int32 slen, char *dest,
  */
 int32
 pglz_decompress(const char *source, int32 slen, char *dest,
-				int32 rawsize)
+				int32 rawsize, bool is_slice)
 {
 	const unsigned char *sp;
 	const unsigned char *srcend;
@@ -768,7 +768,7 @@ pglz_decompress(const char *source, int32 slen, char *dest,
 	/*
 	 * Check we decompressed the right amount.
 	 */
-	if (dp != destend || sp != srcend)
+	if (dp != destend || (sp != srcend && !is_slice))
 		return -1;
 
 	/*

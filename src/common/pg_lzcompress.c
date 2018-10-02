@@ -768,11 +768,11 @@ pglz_decompress(const char *source, int32 slen, char *dest,
 	/*
 	 * Check we decompressed the right amount.
 	 */
-	if (dp != destend || (sp != srcend && !is_slice))
+	if (!is_slice && (dp != destend || sp != srcend))
 		return -1;
 
 	/*
 	 * That's it.
 	 */
-	return rawsize;
+	return (char*)dp - dest;
 }

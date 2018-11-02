@@ -4991,17 +4991,22 @@ text_concat_ws(PG_FUNCTION_ARGS)
 Datum
 text_left(PG_FUNCTION_ARGS)
 {
-	text	   *str = PG_GETARG_TEXT_PP(0);
-	const char *p = VARDATA_ANY(str);
-	int			len = VARSIZE_ANY_EXHDR(str);
-	int			n = PG_GETARG_INT32(1);
-	int			rlen;
+	int n = PG_GETARG_INT32(1);
 
 	if (n < 0)
+	{
+		int	rlen;
+		text *str = PG_GETARG_TEXT_PP(0);
+		const char *p = VARDATA_ANY(str);
+		int len = VARSIZE_ANY_EXHDR(str);
 		n = pg_mbstrlen_with_len(p, len) + n;
-	rlen = pg_mbcharcliplen(p, len, n);
-
-	PG_RETURN_TEXT_P(cstring_to_text_with_len(p, rlen));
+		rlen = pg_mbcharcliplen(p, len, n);
+		PG_RETURN_TEXT_P(cstring_to_text_with_len(p, rlen));
+	}
+	else
+	{
+		PG_RETURN_TEXT_P(text_substring(PG_GETARG_DATUM(0), 1, n, false));
+	}
 }
 
 /*

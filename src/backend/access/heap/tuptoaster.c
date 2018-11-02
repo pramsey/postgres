@@ -2303,7 +2303,7 @@ toast_decompress_datum(struct varlena *attr)
  * toast_decompress_datum_slice -
  *
  * Decompress the front of a compressed version of a varlena datum.
- * offset handling happens in heap_tuple_untoast_attr_slice. 
+ * offset handling happens in heap_tuple_untoast_attr_slice.
  * Here we just decompress a slice from the front.
  */
 static struct varlena *

@@ -5237,14 +5237,14 @@ text_concat_ws(PG_FUNCTION_ARGS)
 Datum
 text_left(PG_FUNCTION_ARGS)
 {
-	int n = PG_GETARG_INT32(1);
+	int		n = PG_GETARG_INT32(1);
 
 	if (n < 0)
 	{
-		int	rlen;
-		text *str = PG_GETARG_TEXT_PP(0);
+		text	   *str = PG_GETARG_TEXT_PP(0);
 		const char *p = VARDATA_ANY(str);
-		int len = VARSIZE_ANY_EXHDR(str);
+		int			len = VARSIZE_ANY_EXHDR(str);
+		int			rlen;
 		n = pg_mbstrlen_with_len(p, len) + n;
 		rlen = pg_mbcharcliplen(p, len, n);
 		PG_RETURN_TEXT_P(cstring_to_text_with_len(p, rlen));

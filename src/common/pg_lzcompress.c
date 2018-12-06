@@ -757,6 +757,9 @@ pglz_decompress(const char *source, int32 slen, char *dest,
 
 	/*
 	 * Check we decompressed the right amount.
+	 * If we are slicing, then we won't necessarily
+	 * be at the end of the source or dest buffers
+	 * when we hit a stop, so we don't test then.
 	 */
 	if (!is_slice && (dp != destend || sp != srcend))
 		return -1;

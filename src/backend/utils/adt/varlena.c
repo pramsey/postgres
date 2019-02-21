@@ -1820,6 +1820,31 @@ text_ge(PG_FUNCTION_ARGS)
 	PG_RETURN_BOOL(result);
 }
 
+#if 0
+ * Return first n characters in the string. When n is negative,
+ * return all but last |n| characters.
+ */
+Datum
+text_left(PG_FUNCTION_ARGS)
+{
+	int		n = PG_GETARG_INT32(1);
+
+	if (n < 0)
+	{
+		text	   *str = PG_GETARG_TEXT_PP(0);
+		const char *p = VARDATA_ANY(str);
+		int			len = VARSIZE_ANY_EXHDR(str);
+		int			rlen;
+		n = pg_mbstrlen_with_len(p, len) + n;
+		rlen = pg_mbcharcliplen(p, len, n);
+		PG_RETURN_TEXT_P(cstring_to_text_with_len(p, rlen));
+	}
+	else
+	{
+		PG_RETURN_TEXT_P(text_substring(PG_GETARG_DATUM(0), 1, n, false));
+	}
+}
+#endif
 Datum
 text_starts_with(PG_FUNCTION_ARGS)
 {
@@ -1835,7 +1860,7 @@ text_starts_with(PG_FUNCTION_ARGS)
 		result = false;
 	else
 	{
-		text	   *targ1 = DatumGetTextPP(arg1);
+		text	   *targ1 = text_substring(arg1, 1, len2, false);
 		text	   *targ2 = DatumGetTextPP(arg2);
 
 		result = (memcmp(VARDATA_ANY(targ1), VARDATA_ANY(targ2),

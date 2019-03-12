@@ -20,11 +20,11 @@
 #include "access/htup_details.h"
 #include "access/reloptions.h"
 #include "access/sysattr.h"
+#include "access/tableam.h"
 #include "access/xact.h"
 #include "catalog/catalog.h"
 #include "catalog/index.h"
 #include "catalog/indexing.h"
-#include "catalog/partition.h"
 #include "catalog/pg_am.h"
 #include "catalog/pg_constraint.h"
 #include "catalog/pg_inherits.h"
@@ -46,6 +46,7 @@
 #include "parser/parse_coerce.h"
 #include "parser/parse_func.h"
 #include "parser/parse_oper.h"
+#include "partitioning/partdesc.h"
 #include "rewrite/rewriteManip.h"
 #include "storage/lmgr.h"
 #include "storage/proc.h"
@@ -2336,7 +2337,7 @@ ReindexMultipleTables(const char *objectName, ReindexObjectType objectKind,
 {
 	Oid			objectOid;
 	Relation	relationRelation;
-	HeapScanDesc scan;
+	TableScanDesc scan;
 	ScanKeyData scan_keys[1];
 	HeapTuple	tuple;
 	MemoryContext private_context;
@@ -2410,7 +2411,7 @@ ReindexMultipleTables(const char *objectName, ReindexObjectType objectKind,
 	 * rels will be processed indirectly by reindex_relation).
 	 */
 	relationRelation = table_open(RelationRelationId, AccessShareLock);
-	scan = heap_beginscan_catalog(relationRelation, num_keys, scan_keys);
+	scan = table_beginscan_catalog(relationRelation, num_keys, scan_keys);
 	while ((tuple = heap_getnext(scan, ForwardScanDirection)) != NULL)
 	{
 		Form_pg_class classtuple = (Form_pg_class) GETSTRUCT(tuple);
@@ -2469,7 +2470,7 @@ ReindexMultipleTables(const char *objectName, ReindexObjectType objectKind,
 
 		MemoryContextSwitchTo(old);
 	}
-	heap_endscan(scan);
+	table_endscan(scan);
 	table_close(relationRelation, AccessShareLock);
 
 	/* Now reindex each rel in a separate transaction */

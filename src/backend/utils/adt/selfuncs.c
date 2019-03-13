@@ -106,6 +106,7 @@
 #include "access/htup_details.h"
 #include "access/sysattr.h"
 #include "access/table.h"
+#include "access/tableam.h"
 #include "catalog/index.h"
 #include "catalog/pg_am.h"
 #include "catalog/pg_collation.h"
@@ -113,6 +114,7 @@
 #include "catalog/pg_statistic.h"
 #include "catalog/pg_statistic_ext.h"
 #include "executor/executor.h"
+#include "executor/nodeAgg.h"
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
@@ -3428,6 +3430,43 @@ estimate_hash_bucket_stats(PlannerInfo *root, Node *hashkey, double nbuckets,
 	ReleaseVariableStats(vardata);
 }
 
+/*
+ * estimate_hashagg_tablesize
+ *	  estimate the number of bytes that a hash aggregate hashtable will
+ *	  require based on the agg_costs, path width and number of groups.
+ *
+ * We return the result as "double" to forestall any possible overflow
+ * problem in the multiplication by dNumGroups.
+ *
+ * XXX this may be over-estimating the size now that hashagg knows to omit
+ * unneeded columns from the hashtable.  Also for mixed-mode grouping sets,
+ * grouping columns not in the hashed set are counted here even though hashagg
+ * won't store them.  Is this a problem?
+ */
+double
+estimate_hashagg_tablesize(Path *path, const AggClauseCosts *agg_costs,
+						   double dNumGroups)
+{
+	Size		hashentrysize;
+
+	/* Estimate per-hash-entry space at tuple width... */
+	hashentrysize = MAXALIGN(path->pathtarget->width) +
+		MAXALIGN(SizeofMinimalTupleHeader);
+
+	/* plus space for pass-by-ref transition values... */
+	hashentrysize += agg_costs->transitionSpace;
+	/* plus the per-hash-entry overhead */
+	hashentrysize += hash_agg_entry_size(agg_costs->numAggs);
+
+	/*
+	 * Note that this disregards the effect of fill-factor and growth policy
+	 * of the hash table.  That's probably ok, given that the default
+	 * fill-factor is relatively high.  It'd be hard to meaningfully factor in
+	 * "double-in-size" growth policies here.
+	 */
+	return hashentrysize * dNumGroups;
+}
+
 
 /*-------------------------------------------------------------------------
  *
@@ -5061,7 +5100,6 @@ get_actual_variable_range(PlannerInfo *root, VariableStatData *vardata,
 			bool		typByVal;
 			ScanKeyData scankeys[1];
 			IndexScanDesc index_scan;
-			HeapTuple	tup;
 			Datum		values[INDEX_MAX_KEYS];
 			bool		isnull[INDEX_MAX_KEYS];
 			SnapshotData SnapshotNonVacuumable;
@@ -5084,8 +5122,7 @@ get_actual_variable_range(PlannerInfo *root, VariableStatData *vardata,
 			indexInfo = BuildIndexInfo(indexRel);
 
 			/* some other stuff */
-			slot = MakeSingleTupleTableSlot(RelationGetDescr(heapRel),
-											&TTSOpsHeapTuple);
+			slot = table_slot_create(heapRel, NULL);
 			econtext->ecxt_scantuple = slot;
 			get_typlenbyval(vardata->atttype, &typLen, &typByVal);
 			InitNonVacuumableSnapshot(SnapshotNonVacuumable, RecentGlobalXmin);
@@ -5137,11 +5174,9 @@ get_actual_variable_range(PlannerInfo *root, VariableStatData *vardata,
 				index_rescan(index_scan, scankeys, 1, NULL, 0);
 
 				/* Fetch first tuple in sortop's direction */
-				if ((tup = index_getnext(index_scan,
-										 indexscandir)) != NULL)
+				if (index_getnext_slot(index_scan, indexscandir, slot))
 				{
-					/* Extract the index column values from the heap tuple */
-					ExecStoreHeapTuple(tup, slot, false);
+					/* Extract the index column values from the slot */
 					FormIndexDatum(indexInfo, slot, estate,
 								   values, isnull);
 
@@ -5170,11 +5205,9 @@ get_actual_variable_range(PlannerInfo *root, VariableStatData *vardata,
 				index_rescan(index_scan, scankeys, 1, NULL, 0);
 
 				/* Fetch first tuple in reverse direction */
-				if ((tup = index_getnext(index_scan,
-										 -indexscandir)) != NULL)
+				if (index_getnext_slot(index_scan, -indexscandir, slot))
 				{
-					/* Extract the index column values from the heap tuple */
-					ExecStoreHeapTuple(tup, slot, false);
+					/* Extract the index column values from the slot */
 					FormIndexDatum(indexInfo, slot, estate,
 								   values, isnull);
 

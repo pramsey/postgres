@@ -33,6 +33,7 @@
 
 #include <unistd.h>
 #include <ctype.h>
+#include <limits.h>
 #ifdef HAVE_TERMIOS_H
 #include <termios.h>
 #endif
@@ -137,6 +138,12 @@ static const CatalogId nilCatalogId = {0, 0};
 /* override for standard extra_float_digits setting */
 static bool have_extra_float_digits = false;
 static int extra_float_digits;
+
+/*
+ * The default number of rows per INSERT when
+ * --inserts is specified without --rows-per-insert
+ */
+#define DUMP_DEFAULT_ROWS_PER_INSERT 1
 
 /*
  * Macro for producing quoted, schema-qualified name of a dumpable object.
@@ -306,11 +313,13 @@ main(int argc, char **argv)
 	DumpableObject *boundaryObjs;
 	int			i;
 	int			optindex;
+	char	   *endptr;
 	RestoreOptions *ropt;
 	Archive    *fout;			/* the script file */
 	const char *dumpencoding = NULL;
 	const char *dumpsnapshot = NULL;
 	char	   *use_role = NULL;
+	long		rowsPerInsert;
 	int			numWorkers = 1;
 	trivalue	prompt_password = TRI_DEFAULT;
 	int			compressLevel = -1;
@@ -363,7 +372,7 @@ main(int argc, char **argv)
 		{"exclude-table-data", required_argument, NULL, 4},
 		{"extra-float-digits", required_argument, NULL, 8},
 		{"if-exists", no_argument, &dopt.if_exists, 1},
-		{"inserts", no_argument, &dopt.dump_inserts, 1},
+		{"inserts", no_argument, NULL, 9},
 		{"lock-wait-timeout", required_argument, NULL, 2},
 		{"no-tablespaces", no_argument, &dopt.outputNoTablespaces, 1},
 		{"quote-all-identifiers", no_argument, &quote_all_identifiers, 1},
@@ -382,6 +391,7 @@ main(int argc, char **argv)
 		{"no-subscriptions", no_argument, &dopt.no_subscriptions, 1},
 		{"no-sync", no_argument, NULL, 7},
 		{"on-conflict-do-nothing", no_argument, &dopt.do_nothing, 1},
+		{"rows-per-insert", required_argument, NULL, 10},
 
 		{NULL, 0, NULL, 0}
 	};
@@ -572,6 +582,31 @@ main(int argc, char **argv)
 				}
 				break;
 
+			case 9:				/* inserts */
+
+				/*
+				 * dump_inserts also stores --rows-per-insert, careful not to
+				 * overwrite that.
+				 */
+				if (dopt.dump_inserts == 0)
+					dopt.dump_inserts = DUMP_DEFAULT_ROWS_PER_INSERT;
+				break;
+
+			case 10:			/* rows per insert */
+				errno = 0;
+				rowsPerInsert = strtol(optarg, &endptr, 10);
+
+				if (endptr == optarg || *endptr != '\0' ||
+					rowsPerInsert <= 0 || rowsPerInsert > INT_MAX ||
+					errno == ERANGE)
+				{
+					write_msg(NULL, "rows-per-insert must be in range %d..%d\n",
+							  1, INT_MAX);
+					exit_nicely(1);
+				}
+				dopt.dump_inserts = (int) rowsPerInsert;
+				break;
+
 			default:
 				fprintf(stderr, _("Try \"%s --help\" for more information.\n"), progname);
 				exit_nicely(1);
@@ -596,8 +631,8 @@ main(int argc, char **argv)
 	}
 
 	/* --column-inserts implies --inserts */
-	if (dopt.column_inserts)
-		dopt.dump_inserts = 1;
+	if (dopt.column_inserts && dopt.dump_inserts == 0)
+		dopt.dump_inserts = DUMP_DEFAULT_ROWS_PER_INSERT;
 
 	/*
 	 * Binary upgrade mode implies dumping sequence data even in schema-only
@@ -622,8 +657,12 @@ main(int argc, char **argv)
 	if (dopt.if_exists && !dopt.outputClean)
 		exit_horribly(NULL, "option --if-exists requires option -c/--clean\n");
 
-	if (dopt.do_nothing && !(dopt.dump_inserts || dopt.column_inserts))
-		exit_horribly(NULL, "option --on-conflict-do-nothing requires option --inserts or --column-inserts\n");
+	/*
+	 * --inserts are already implied above if --column-inserts or
+	 * --rows-per-insert were specified.
+	 */
+	if (dopt.do_nothing && dopt.dump_inserts == 0)
+		exit_horribly(NULL, "option --on-conflict-do-nothing requires option --inserts, --rows-per-insert or --column-inserts\n");
 
 	/* Identify archive format to emit */
 	archiveFormat = parseArchiveFormat(format, &archiveMode);
@@ -993,6 +1032,7 @@ help(const char *progname)
 	printf(_("  --no-unlogged-table-data     do not dump unlogged table data\n"));
 	printf(_("  --on-conflict-do-nothing     add ON CONFLICT DO NOTHING to INSERT commands\n"));
 	printf(_("  --quote-all-identifiers      quote all identifiers, even if not key words\n"));
+	printf(_("  --rows-per-insert=NROWS      number of rows per INSERT; implies --inserts\n"));
 	printf(_("  --section=SECTION            dump named section (pre-data, data, or post-data)\n"));
 	printf(_("  --serializable-deferrable    wait until the dump can run without anomalies\n"));
 	printf(_("  --snapshot=SNAPSHOT          use given snapshot for the dump\n"));
@@ -1301,7 +1341,8 @@ expand_schema_name_patterns(Archive *fout,
 
 /*
  * Find the OIDs of all tables matching the given list of patterns,
- * and append them to the given OID list.
+ * and append them to the given OID list. See also expand_dbname_patterns()
+ * in pg_dumpall.c
  */
 static void
 expand_table_name_patterns(Archive *fout,
@@ -1908,9 +1949,9 @@ dumpTableData_insert(Archive *fout, void *dcontext)
 	PQExpBuffer q = createPQExpBuffer();
 	PQExpBuffer insertStmt = NULL;
 	PGresult   *res;
-	int			tuple;
 	int			nfields;
-	int			field;
+	int			rows_per_statement = dopt->dump_inserts;
+	int			rows_this_statement = 0;
 
 	appendPQExpBuffer(q, "DECLARE _pg_dump_cursor CURSOR FOR "
 					  "SELECT * FROM ONLY %s",
@@ -1925,69 +1966,88 @@ dumpTableData_insert(Archive *fout, void *dcontext)
 		res = ExecuteSqlQuery(fout, "FETCH 100 FROM _pg_dump_cursor",
 							  PGRES_TUPLES_OK);
 		nfields = PQnfields(res);
-		for (tuple = 0; tuple < PQntuples(res); tuple++)
+
+		/*
+		 * First time through, we build as much of the INSERT statement as
+		 * possible in "insertStmt", which we can then just print for each
+		 * statement. If the table happens to have zero columns then this will
+		 * be a complete statement, otherwise it will end in "VALUES" and be
+		 * ready to have the row's column values printed.
+		 */
+		if (insertStmt == NULL)
 		{
+			TableInfo  *targettab;
+
+			insertStmt = createPQExpBuffer();
+
 			/*
-			 * First time through, we build as much of the INSERT statement as
-			 * possible in "insertStmt", which we can then just print for each
-			 * line. If the table happens to have zero columns then this will
-			 * be a complete statement, otherwise it will end in "VALUES(" and
-			 * be ready to have the row's column values appended.
+			 * When load-via-partition-root is set, get the root table name
+			 * for the partition table, so that we can reload data through the
+			 * root table.
 			 */
-			if (insertStmt == NULL)
+			if (dopt->load_via_partition_root && tbinfo->ispartition)
+				targettab = getRootTableInfo(tbinfo);
+			else
+				targettab = tbinfo;
+
+			appendPQExpBuffer(insertStmt, "INSERT INTO %s ",
+							  fmtQualifiedDumpable(targettab));
+
+			/* corner case for zero-column table */
+			if (nfields == 0)
 			{
-				TableInfo  *targettab;
-
-				insertStmt = createPQExpBuffer();
-
-				/*
-				 * When load-via-partition-root is set, get the root table
-				 * name for the partition table, so that we can reload data
-				 * through the root table.
-				 */
-				if (dopt->load_via_partition_root && tbinfo->ispartition)
-					targettab = getRootTableInfo(tbinfo);
-				else
-					targettab = tbinfo;
-
-				appendPQExpBuffer(insertStmt, "INSERT INTO %s ",
-								  fmtQualifiedDumpable(targettab));
-
-				/* corner case for zero-column table */
-				if (nfields == 0)
-				{
-					appendPQExpBufferStr(insertStmt, "DEFAULT VALUES;\n");
-				}
-				else
-				{
-					/* append the list of column names if required */
-					if (dopt->column_inserts)
-					{
-						appendPQExpBufferChar(insertStmt, '(');
-						for (field = 0; field < nfields; field++)
-						{
-							if (field > 0)
-								appendPQExpBufferStr(insertStmt, ", ");
-							appendPQExpBufferStr(insertStmt,
-												 fmtId(PQfname(res, field)));
-						}
-						appendPQExpBufferStr(insertStmt, ") ");
-					}
-
-					if (tbinfo->needs_override)
-						appendPQExpBufferStr(insertStmt, "OVERRIDING SYSTEM VALUE ");
-
-					appendPQExpBufferStr(insertStmt, "VALUES (");
-				}
+				appendPQExpBufferStr(insertStmt, "DEFAULT VALUES;\n");
 			}
+			else
+			{
+				/* append the list of column names if required */
+				if (dopt->column_inserts)
+				{
+					appendPQExpBufferChar(insertStmt, '(');
+					for (int field = 0; field < nfields; field++)
+					{
+						if (field > 0)
+							appendPQExpBufferStr(insertStmt, ", ");
+						appendPQExpBufferStr(insertStmt,
+											 fmtId(PQfname(res, field)));
+					}
+					appendPQExpBufferStr(insertStmt, ") ");
+				}
 
-			archputs(insertStmt->data, fout);
+				if (tbinfo->needs_override)
+					appendPQExpBufferStr(insertStmt, "OVERRIDING SYSTEM VALUE ");
 
-			/* if it is zero-column table then we're done */
+				appendPQExpBufferStr(insertStmt, "VALUES");
+			}
+		}
+
+		for (int tuple = 0; tuple < PQntuples(res); tuple++)
+		{
+			/* Write the INSERT if not in the middle of a multi-row INSERT. */
+			if (rows_this_statement == 0)
+				archputs(insertStmt->data, fout);
+
+			/*
+			 * If it is zero-column table then we've aleady written the
+			 * complete statement, which will mean we've disobeyed
+			 * --rows-per-insert when it's set greater than 1.  We do support
+			 * a way to make this multi-row with: SELECT UNION ALL SELECT
+			 * UNION ALL ... but that's non-standard so we should avoid it
+			 * given that using INSERTs is mostly only ever needed for
+			 * cross-database exports.
+			 */
 			if (nfields == 0)
 				continue;
 
-			for (field = 0; field < nfields; field++)
+			/* Emit a row heading */
+			if (rows_per_statement == 1)
+				archputs(" (", fout);
+			else if (rows_this_statement > 0)
+				archputs(",\n\t(", fout);
+			else
+				archputs("\n\t(", fout);
+
+			for (int field = 0; field < nfields; field++)
 			{
 				if (field > 0)
 					archputs(", ", fout);
@@ -2052,10 +2112,19 @@ dumpTableData_insert(Archive *fout, void *dcontext)
 				}
 			}
 
-			if (!dopt->do_nothing)
-				archputs(");\n", fout);
-			else
-				archputs(") ON CONFLICT DO NOTHING;\n", fout);
+			/* Terminate the row ... */
+			archputs(")", fout);
+
+			/* ... and the statement, if the target no. of rows is reached */
+			if (++rows_this_statement >= rows_per_statement)
+			{
+				if (dopt->do_nothing)
+					archputs(" ON CONFLICT DO NOTHING;\n", fout);
+				else
+					archputs(";\n", fout);
+				/* Reset the row counter */
+				rows_this_statement = 0;
+			}
 		}
 
 		if (PQntuples(res) <= 0)
@@ -2064,6 +2133,15 @@ dumpTableData_insert(Archive *fout, void *dcontext)
 			break;
 		}
 		PQclear(res);
+	}
+
+	/* Terminate any statements that didn't make the row count. */
+	if (rows_this_statement > 0)
+	{
+		if (dopt->do_nothing)
+			archputs(" ON CONFLICT DO NOTHING;\n", fout);
+		else
+			archputs(";\n", fout);
 	}
 
 	archputs("\n\n", fout);
@@ -2165,6 +2243,8 @@ dumpTableData(Archive *fout, TableDataInfo *tdinfo)
 									   .owner = tbinfo->rolname,
 									   .description = "TABLE DATA",
 									   .section = SECTION_DATA,
+									   .createStmt = "",
+									   .dropStmt = "",
 									   .copyStmt = copyStmt,
 									   .deps = &(tbinfo->dobj.dumpId),
 									   .nDeps = 1,
@@ -2219,6 +2299,7 @@ refreshMatViewData(Archive *fout, TableDataInfo *tdinfo)
 								  .description = "MATERIALIZED VIEW DATA",
 								  .section = SECTION_POST_DATA,
 								  .createStmt = q->data,
+								  .dropStmt = "",
 								  .deps = tdinfo->dobj.dependencies,
 								  .nDeps = tdinfo->dobj.nDeps));
 
@@ -2784,6 +2865,7 @@ dumpDatabase(Archive *fout)
 									  .description = "COMMENT",
 									  .section = SECTION_NONE,
 									  .createStmt = dbQry->data,
+									  .dropStmt = "",
 									  .deps = &dbDumpId,
 									  .nDeps = 1));
 		}
@@ -2813,6 +2895,7 @@ dumpDatabase(Archive *fout)
 									  .description = "SECURITY LABEL",
 									  .section = SECTION_NONE,
 									  .createStmt = seclabelQry->data,
+									  .dropStmt = "",
 									  .deps = &dbDumpId,
 									  .nDeps = 1));
 		destroyPQExpBuffer(seclabelQry);
@@ -2929,8 +3012,10 @@ dumpDatabase(Archive *fout)
 		ArchiveEntry(fout, nilCatalogId, createDumpId(),
 					 ARCHIVE_OPTS(.tag = "pg_largeobject",
 								  .description = "pg_largeobject",
+								  .owner = "",
 								  .section = SECTION_PRE_DATA,
-								  .createStmt = loOutQry->data));
+								  .createStmt = loOutQry->data,
+								  .dropStmt = ""));
 
 		PQclear(lo_res);
 
@@ -3038,8 +3123,10 @@ dumpEncoding(Archive *AH)
 	ArchiveEntry(AH, nilCatalogId, createDumpId(),
 				 ARCHIVE_OPTS(.tag = "ENCODING",
 							  .description = "ENCODING",
+							  .owner = "",
 							  .section = SECTION_PRE_DATA,
-							  .createStmt = qry->data));
+							  .createStmt = qry->data,
+							  .dropStmt = ""));
 
 	destroyPQExpBuffer(qry);
 }
@@ -3064,8 +3151,10 @@ dumpStdStrings(Archive *AH)
 	ArchiveEntry(AH, nilCatalogId, createDumpId(),
 				 ARCHIVE_OPTS(.tag = "STDSTRINGS",
 							  .description = "STDSTRINGS",
+							  .owner = "",
 							  .section = SECTION_PRE_DATA,
-							  .createStmt = qry->data));
+							  .createStmt = qry->data,
+							  .dropStmt = ""));
 
 	destroyPQExpBuffer(qry);
 }
@@ -3119,8 +3208,10 @@ dumpSearchPath(Archive *AH)
 	ArchiveEntry(AH, nilCatalogId, createDumpId(),
 				 ARCHIVE_OPTS(.tag = "SEARCHPATH",
 							  .description = "SEARCHPATH",
+							  .owner = "",
 							  .section = SECTION_PRE_DATA,
-							  .createStmt = qry->data));
+							  .createStmt = qry->data,
+							  .dropStmt = ""));
 
 	/* Also save it in AH->searchpath, in case we're doing plain text dump */
 	AH->searchpath = pg_strdup(qry->data);
@@ -3601,6 +3692,7 @@ dumpPolicy(Archive *fout, PolicyInfo *polinfo)
 									  .description = "ROW SECURITY",
 									  .section = SECTION_POST_DATA,
 									  .createStmt = query->data,
+									  .dropStmt = "",
 									  .deps = &(tbinfo->dobj.dumpId),
 									  .nDeps = 1));
 
@@ -3968,8 +4060,10 @@ dumpPublicationTable(Archive *fout, PublicationRelInfo *pubrinfo)
 				 ARCHIVE_OPTS(.tag = tag,
 							  .namespace = tbinfo->dobj.namespace->dobj.name,
 							  .description = "PUBLICATION TABLE",
+							  .owner = "",
 							  .section = SECTION_POST_DATA,
-							  .createStmt = query->data));
+							  .createStmt = query->data,
+							  .dropStmt = ""));
 
 	free(tag);
 	destroyPQExpBuffer(query);
@@ -4260,14 +4354,20 @@ binary_upgrade_set_type_oids_by_rel_oid(Archive *fout,
 	Oid			pg_type_oid;
 	bool		toast_set = false;
 
-	/* we only support old >= 8.3 for binary upgrades */
+	/*
+	 * We only support old >= 8.3 for binary upgrades.
+	 *
+	 * We purposefully ignore toast OIDs for partitioned tables; the reason is
+	 * that versions 10 and 11 have them, but 12 does not, so emitting them
+	 * causes the upgrade to fail.
+	 */
 	appendPQExpBuffer(upgrade_query,
 					  "SELECT c.reltype AS crel, t.reltype AS trel "
 					  "FROM pg_catalog.pg_class c "
 					  "LEFT JOIN pg_catalog.pg_class t ON "
-					  "  (c.reltoastrelid = t.oid) "
+					  "  (c.reltoastrelid = t.oid AND c.relkind <> '%c') "
 					  "WHERE c.oid = '%u'::pg_catalog.oid;",
-					  pg_rel_oid);
+					  RELKIND_PARTITIONED_TABLE, pg_rel_oid);
 
 	upgrade_res = ExecuteSqlQueryForSingleRow(fout, upgrade_query->data);
 
@@ -5839,6 +5939,7 @@ getTables(Archive *fout, int *numTables)
 	int			i_partkeydef;
 	int			i_ispartition;
 	int			i_partbound;
+	int			i_amname;
 
 	/*
 	 * Find all the tables and table-like objects.
@@ -5858,6 +5959,10 @@ getTables(Archive *fout, int *numTables)
 	 * information about each table, basically just enough to decide if it is
 	 * interesting. We must fetch all tables in this phase because otherwise
 	 * we cannot correctly identify inherited columns, owned sequences, etc.
+	 *
+	 * We purposefully ignore toast OIDs for partitioned tables; the reason is
+	 * that versions 10 and 11 have them, but 12 does not, so emitting them
+	 * causes the upgrade to fail.
 	 */
 
 	if (fout->remoteVersion >= 90600)
@@ -5924,7 +6029,7 @@ getTables(Archive *fout, int *numTables)
 						  "tc.relfrozenxid AS tfrozenxid, "
 						  "tc.relminmxid AS tminmxid, "
 						  "c.relpersistence, c.relispopulated, "
-						  "c.relreplident, c.relpages, "
+						  "c.relreplident, c.relpages, am.amname, "
 						  "CASE WHEN c.reloftype <> 0 THEN c.reloftype::pg_catalog.regtype ELSE NULL END AS reloftype, "
 						  "d.refobjid AS owning_tab, "
 						  "d.refobjsubid AS owning_col, "
@@ -5954,7 +6059,8 @@ getTables(Archive *fout, int *numTables)
 						  "d.classid = c.tableoid AND d.objid = c.oid AND "
 						  "d.objsubid = 0 AND "
 						  "d.refclassid = c.tableoid AND d.deptype IN ('a', 'i')) "
-						  "LEFT JOIN pg_class tc ON (c.reltoastrelid = tc.oid) "
+						  "LEFT JOIN pg_class tc ON (c.reltoastrelid = tc.oid AND c.relkind <> '%c') "
+						  "LEFT JOIN pg_am am ON (c.relam = am.oid) "
 						  "LEFT JOIN pg_init_privs pip ON "
 						  "(c.oid = pip.objoid "
 						  "AND pip.classoid = 'pg_class'::regclass "
@@ -5976,6 +6082,7 @@ getTables(Archive *fout, int *numTables)
 						  ispartition,
 						  partbound,
 						  RELKIND_SEQUENCE,
+						  RELKIND_PARTITIONED_TABLE,
 						  RELKIND_RELATION, RELKIND_SEQUENCE,
 						  RELKIND_VIEW, RELKIND_COMPOSITE_TYPE,
 						  RELKIND_MATVIEW, RELKIND_FOREIGN_TABLE,
@@ -6422,6 +6529,7 @@ getTables(Archive *fout, int *numTables)
 	i_partkeydef = PQfnumber(res, "partkeydef");
 	i_ispartition = PQfnumber(res, "ispartition");
 	i_partbound = PQfnumber(res, "partbound");
+	i_amname = PQfnumber(res, "amname");
 
 	if (dopt->lockWaitTimeout)
 	{
@@ -6491,6 +6599,10 @@ getTables(Archive *fout, int *numTables)
 		else
 			tblinfo[i].checkoption = pg_strdup(PQgetvalue(res, i, i_checkoption));
 		tblinfo[i].toast_reloptions = pg_strdup(PQgetvalue(res, i, i_toastreloptions));
+		if (PQgetisnull(res, i, i_amname))
+			tblinfo[i].amname = NULL;
+		else
+			tblinfo[i].amname = pg_strdup(PQgetvalue(res, i, i_amname));
 
 		/* other fields were zeroed above */
 
@@ -9393,6 +9505,7 @@ dumpComment(Archive *fout, const char *type, const char *name,
 								  .description = "COMMENT",
 								  .section = SECTION_NONE,
 								  .createStmt = query->data,
+								  .dropStmt = "",
 								  .deps = &dumpId,
 								  .nDeps = 1));
 
@@ -9462,6 +9575,7 @@ dumpTableComment(Archive *fout, TableInfo *tbinfo,
 									  .description = "COMMENT",
 									  .section = SECTION_NONE,
 									  .createStmt = query->data,
+									  .dropStmt = "",
 									  .deps = &(tbinfo->dobj.dumpId),
 									  .nDeps = 1));
 		}
@@ -9487,6 +9601,7 @@ dumpTableComment(Archive *fout, TableInfo *tbinfo,
 									  .description = "COMMENT",
 									  .section = SECTION_NONE,
 									  .createStmt = query->data,
+									  .dropStmt = "",
 									  .deps = &(tbinfo->dobj.dumpId),
 									  .nDeps = 1));
 		}
@@ -9767,8 +9882,11 @@ dumpDumpableObject(Archive *fout, DumpableObject *dobj)
 				te = ArchiveEntry(fout, dobj->catId, dobj->dumpId,
 								  ARCHIVE_OPTS(.tag = dobj->name,
 											   .description = "BLOBS",
+											   .owner = "",
 											   .section = SECTION_DATA,
-											   .dumpFn = dumpBlobs));
+											   .dumpFn = dumpBlobs,
+											   .createStmt = "",
+											   .dropStmt = ""));
 
 				/*
 				 * Set the TocEntry's dataLength in case we are doing a
@@ -9973,6 +10091,7 @@ dumpExtension(Archive *fout, ExtensionInfo *extinfo)
 		ArchiveEntry(fout, extinfo->dobj.catId, extinfo->dobj.dumpId,
 					 ARCHIVE_OPTS(.tag = extinfo->dobj.name,
 								  .description = "EXTENSION",
+								  .owner = "",
 								  .section = SECTION_PRE_DATA,
 								  .createStmt = q->data,
 								  .dropStmt = delq->data));
@@ -11116,6 +11235,7 @@ dumpCompositeTypeColComments(Archive *fout, TypeInfo *tyinfo)
 									  .description = "COMMENT",
 									  .section = SECTION_NONE,
 									  .createStmt = query->data,
+									  .dropStmt = "",
 									  .deps = &(tyinfo->dobj.dumpId),
 									  .nDeps = 1));
 		}
@@ -11171,7 +11291,8 @@ dumpShellType(Archive *fout, ShellTypeInfo *stinfo)
 								  .owner = stinfo->baseType->rolname,
 								  .description = "SHELL TYPE",
 								  .section = SECTION_PRE_DATA,
-								  .createStmt = q->data));
+								  .createStmt = q->data,
+								  .dropStmt = ""));
 
 	destroyPQExpBuffer(q);
 }
@@ -12116,6 +12237,7 @@ dumpCast(Archive *fout, CastInfo *cast)
 		ArchiveEntry(fout, cast->dobj.catId, cast->dobj.dumpId,
 					 ARCHIVE_OPTS(.tag = labelq->data,
 								  .description = "CAST",
+								  .owner = "",
 								  .section = SECTION_PRE_DATA,
 								  .createStmt = defqry->data,
 								  .dropStmt = delqry->data));
@@ -12243,6 +12365,7 @@ dumpTransform(Archive *fout, TransformInfo *transform)
 		ArchiveEntry(fout, transform->dobj.catId, transform->dobj.dumpId,
 					 ARCHIVE_OPTS(.tag = labelq->data,
 								  .description = "TRANSFORM",
+								  .owner = "",
 								  .section = SECTION_PRE_DATA,
 								  .createStmt = defqry->data,
 								  .dropStmt = delqry->data,
@@ -12604,6 +12727,9 @@ dumpAccessMethod(Archive *fout, AccessMethodInfo *aminfo)
 		case AMTYPE_INDEX:
 			appendPQExpBuffer(q, "TYPE INDEX ");
 			break;
+		case AMTYPE_TABLE:
+			appendPQExpBuffer(q, "TYPE TABLE ");
+			break;
 		default:
 			write_msg(NULL, "WARNING: invalid type \"%c\" of access method \"%s\"\n",
 					  aminfo->amtype, qamname);
@@ -12626,6 +12752,7 @@ dumpAccessMethod(Archive *fout, AccessMethodInfo *aminfo)
 		ArchiveEntry(fout, aminfo->dobj.catId, aminfo->dobj.dumpId,
 					 ARCHIVE_OPTS(.tag = aminfo->dobj.name,
 								  .description = "ACCESS METHOD",
+								  .owner = "",
 								  .section = SECTION_PRE_DATA,
 								  .createStmt = q->data,
 								  .dropStmt = delq->data));
@@ -14077,6 +14204,7 @@ dumpTSParser(Archive *fout, TSParserInfo *prsinfo)
 					 ARCHIVE_OPTS(.tag = prsinfo->dobj.name,
 								  .namespace = prsinfo->dobj.namespace->dobj.name,
 								  .description = "TEXT SEARCH PARSER",
+								  .owner = "",
 								  .section = SECTION_PRE_DATA,
 								  .createStmt = q->data,
 								  .dropStmt = delq->data));
@@ -14215,6 +14343,7 @@ dumpTSTemplate(Archive *fout, TSTemplateInfo *tmplinfo)
 					 ARCHIVE_OPTS(.tag = tmplinfo->dobj.name,
 								  .namespace = tmplinfo->dobj.namespace->dobj.name,
 								  .description = "TEXT SEARCH TEMPLATE",
+								  .owner = "",
 								  .section = SECTION_PRE_DATA,
 								  .createStmt = q->data,
 								  .dropStmt = delq->data));
@@ -14684,7 +14813,8 @@ dumpDefaultACL(Archive *fout, DefaultACLInfo *daclinfo)
 								  .owner = daclinfo->defaclrole,
 								  .description = "DEFAULT ACL",
 								  .section = SECTION_POST_DATA,
-								  .createStmt = q->data));
+								  .createStmt = q->data,
+								  .dropStmt = ""));
 
 	destroyPQExpBuffer(tag);
 	destroyPQExpBuffer(q);
@@ -14782,6 +14912,7 @@ dumpACL(Archive *fout, CatalogId objCatId, DumpId objDumpId,
 								  .description = "ACL",
 								  .section = SECTION_NONE,
 								  .createStmt = sql->data,
+								  .dropStmt = "",
 								  .deps = &objDumpId,
 								  .nDeps = 1));
 		destroyPQExpBuffer(tag);
@@ -14871,6 +15002,7 @@ dumpSecLabel(Archive *fout, const char *type, const char *name,
 								  .description = "SECURITY LABEL",
 								  .section = SECTION_NONE,
 								  .createStmt = query->data,
+								  .dropStmt = "",
 								  .deps = &dumpId,
 								  .nDeps = 1));
 		destroyPQExpBuffer(tag);
@@ -14954,6 +15086,7 @@ dumpTableSecLabel(Archive *fout, TableInfo *tbinfo, const char *reltypename)
 								  .description = "SECURITY LABEL",
 								  .section = SECTION_NONE,
 								  .createStmt = query->data,
+								  .dropStmt = "",
 								  .deps = &(tbinfo->dobj.dumpId),
 								  .nDeps = 1));
 	}
@@ -16032,18 +16165,26 @@ dumpTableSchema(Archive *fout, TableInfo *tbinfo)
 										tbinfo->dobj.namespace->dobj.name);
 
 	if (tbinfo->dobj.dump & DUMP_COMPONENT_DEFINITION)
+	{
+		char *tableam = NULL;
+
+		if (tbinfo->relkind == RELKIND_RELATION ||
+			tbinfo->relkind == RELKIND_MATVIEW)
+			tableam = tbinfo->amname;
+
 		ArchiveEntry(fout, tbinfo->dobj.catId, tbinfo->dobj.dumpId,
 					 ARCHIVE_OPTS(.tag = tbinfo->dobj.name,
 								  .namespace = tbinfo->dobj.namespace->dobj.name,
 								  .tablespace = (tbinfo->relkind == RELKIND_VIEW) ?
 								  NULL : tbinfo->reltablespace,
+								  .tableam = tableam,
 								  .owner = tbinfo->rolname,
 								  .description = reltypename,
 								  .section = tbinfo->postponed_def ?
 								  SECTION_POST_DATA : SECTION_PRE_DATA,
 								  .createStmt = q->data,
 								  .dropStmt = delq->data));
-
+	}
 
 	/* Dump Table Comments */
 	if (tbinfo->dobj.dump & DUMP_COMPONENT_COMMENT)
@@ -16313,8 +16454,10 @@ dumpIndexAttach(Archive *fout, IndexAttachInfo *attachinfo)
 					 ARCHIVE_OPTS(.tag = attachinfo->dobj.name,
 								  .namespace = attachinfo->dobj.namespace->dobj.name,
 								  .description = "INDEX ATTACH",
+								  .owner = "",
 								  .section = SECTION_POST_DATA,
-								  .createStmt = q->data));
+								  .createStmt = q->data,
+								  .dropStmt = ""));
 
 		destroyPQExpBuffer(q);
 	}
@@ -16944,6 +17087,7 @@ dumpSequence(Archive *fout, TableInfo *tbinfo)
 										  .description = "SEQUENCE OWNED BY",
 										  .section = SECTION_PRE_DATA,
 										  .createStmt = query->data,
+										  .dropStmt = "",
 										  .deps = &(tbinfo->dobj.dumpId),
 										  .nDeps = 1));
 		}
@@ -17012,6 +17156,7 @@ dumpSequenceData(Archive *fout, TableDataInfo *tdinfo)
 								  .description = "SEQUENCE SET",
 								  .section = SECTION_DATA,
 								  .createStmt = query->data,
+								  .dropStmt = "",
 								  .deps = &(tbinfo->dobj.dumpId),
 								  .nDeps = 1));
 

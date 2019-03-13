@@ -432,7 +432,7 @@ ECPGis_noind_null(enum ECPGttype type, const void *ptr)
 				return true;
 			break;
 		case ECPGt_bytea:
-			if (((struct ECPGgeneric_bytea *) ptr)->len == 0)
+			if (((const struct ECPGgeneric_bytea *) ptr)->len == 0)
 				return true;
 			break;
 		case ECPGt_decimal:
@@ -535,13 +535,13 @@ ECPGset_var(int number, void *pointer, int lineno)
 	struct sqlca_t *sqlca = ECPGget_sqlca();
 
 	if (sqlca == NULL)
-        {
-                ecpg_raise(lineno, ECPG_OUT_OF_MEMORY,
-			ECPG_SQLSTATE_ECPG_OUT_OF_MEMORY, NULL);
-                return;
-        }
+	{
+		ecpg_raise(lineno, ECPG_OUT_OF_MEMORY,
+				   ECPG_SQLSTATE_ECPG_OUT_OF_MEMORY, NULL);
+		return;
+	}
 
-        ecpg_init_sqlca(sqlca);
+	ecpg_init_sqlca(sqlca);
 
 	for (ptr = ivlist; ptr != NULL; ptr = ptr->next)
 	{

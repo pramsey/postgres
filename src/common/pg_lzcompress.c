@@ -690,7 +690,7 @@ pglz_decompress(const char *source, int32 slen, char *dest,
  *
  *		Decompresses source into dest. Returns the number of bytes
  *		decompressed in the destination buffer, and *optionally*
- *      checks that both the source and dest buffers have been 
+ *      checks that both the source and dest buffers have been
  *      fully read and written to, respectively.
  * ----------
  */
@@ -717,11 +717,8 @@ pglz_decompress_checked(const char *source, int32 slen, char *dest,
 		unsigned char ctrl = *sp++;
 		int			ctrlc;
 
-		for (ctrlc = 0; ctrlc < 8 && sp < srcend; ctrlc++)
+		for (ctrlc = 0; ctrlc < 8 && sp < srcend && dp < destend; ctrlc++)
 		{
-
-			if (dp >= destend)	/* check for buffer overrun */
-				break;		/* do not clobber memory */
 
 			if (ctrl & 1)
 			{

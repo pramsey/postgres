@@ -2277,7 +2277,7 @@ toast_decompress_datum(struct varlena *attr)
 	if (pglz_decompress(TOAST_COMPRESS_RAWDATA(attr),
 						VARSIZE(attr) - TOAST_COMPRESS_HDRSZ,
 						VARDATA(result),
-						TOAST_COMPRESS_RAWSIZE(attr), false) < 0)
+						TOAST_COMPRESS_RAWSIZE(attr)) < 0)
 		elog(ERROR, "compressed data is corrupted");
 
 	return result;
@@ -2302,10 +2302,10 @@ toast_decompress_datum_slice(struct varlena *attr, int32 slicelength)
 	result = (struct varlena *) palloc(slicelength + VARHDRSZ);
 	SET_VARSIZE(result, slicelength + VARHDRSZ);
 
-	rawsize = pglz_decompress(TOAST_COMPRESS_RAWDATA(attr),
+	rawsize = pglz_decompress_checked(TOAST_COMPRESS_RAWDATA(attr),
 						VARSIZE(attr) - TOAST_COMPRESS_HDRSZ,
 						VARDATA(result),
-						slicelength, true);
+						slicelength, false);
 	if (rawsize < 0)
 		elog(ERROR, "compressed data is corrupted");
 

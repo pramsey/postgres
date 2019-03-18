@@ -674,29 +674,14 @@ pglz_compress(const char *source, int32 slen, char *dest,
  * pglz_decompress -
  *
  *		Decompresses source into dest. Returns the number of bytes
- *		decompressed in the destination buffer, or -1 if decompression
- *		fails.
- * ----------
- */
-int32
-pglz_decompress(const char *source, int32 slen, char *dest,
-				int32 rawsize)
-{
-	return pglz_decompress_checked(source, slen, dest, rawsize, true);
-}
-
-/* ----------
- * pglz_decompress_checked -
- *
- *		Decompresses source into dest. Returns the number of bytes
  *		decompressed in the destination buffer, and *optionally*
  *      checks that both the source and dest buffers have been
  *      fully read and written to, respectively.
  * ----------
  */
 int32
-pglz_decompress_checked(const char *source, int32 slen, char *dest,
-						 int32 rawsize, bool check_buffers)
+pglz_decompress(const char *source, int32 slen, char *dest,
+						 int32 rawsize, bool check_complete)
 {
 	const unsigned char *sp;
 	const unsigned char *srcend;
@@ -744,12 +729,11 @@ pglz_decompress_checked(const char *source, int32 slen, char *dest,
 				 * memcpy() here, because the copied areas could overlap
 				 * extremely!
 				 */
+				len = Min(len, destend - dp);
 				while (len--)
 				{
 					*dp = dp[-off];
 					dp++;
-					if (dp >= destend)	/* check for buffer overrun */
-						break;		/* do not clobber memory */
 				}
 			}
 			else
@@ -774,7 +758,7 @@ pglz_decompress_checked(const char *source, int32 slen, char *dest,
 	 * be at the end of the source or dest buffers
 	 * when we hit a stop, so we don't test them.
 	 */
-	if (check_buffers && (dp != destend || sp != srcend))
+	if (check_complete && (dp != destend || sp != srcend))
 		return -1;
 
 	/*

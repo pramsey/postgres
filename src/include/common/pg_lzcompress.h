@@ -86,8 +86,6 @@ extern const PGLZ_Strategy *const PGLZ_strategy_always;
 extern int32 pglz_compress(const char *source, int32 slen, char *dest,
 			  const PGLZ_Strategy *strategy);
 extern int32 pglz_decompress(const char *source, int32 slen, char *dest,
-				int32 rawsize);
-extern int32 pglz_decompress_checked(const char *source, int32 slen, char *dest,
-				int32 rawsize, bool check_buffers);
+				int32 rawsize, bool check_complete);
 
 #endif							/* _PG_LZCOMPRESS_H_ */

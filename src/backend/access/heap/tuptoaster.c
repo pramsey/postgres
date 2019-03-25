@@ -2300,7 +2300,6 @@ toast_decompress_datum_slice(struct varlena *attr, int32 slicelength)
 	Assert(VARATT_IS_COMPRESSED(attr));
 
 	result = (struct varlena *) palloc(slicelength + VARHDRSZ);
-	SET_VARSIZE(result, slicelength + VARHDRSZ);
 
 	rawsize = pglz_decompress(TOAST_COMPRESS_RAWDATA(attr),
 						VARSIZE(attr) - TOAST_COMPRESS_HDRSZ,
